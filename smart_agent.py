@@ -1,25 +1,25 @@
-#!/usr/bin/python3
-from bcc import BPF
-import socket
-import struct
-import time
+#!/usr/bin/env python3
+"""Smart Agent: eBPF-based TCP RTT & retransmission monitor with richer metrics.
+
+- Collects RTT samples and retransmission events via BCC eBPF probes.
+- Aggregates metrics per interval and maintains a rolling window for smoother trends.
+- Writes extended metrics to CSV for model training or live visualization.
+"""
+import argparse
 import csv
+import statistics
+import time
 from collections import deque
 
-# ==========================================
-# 1. eBPF 内核代码 (二合一)
-# ==========================================
-bpf_text = """
+from bcc import BPF
+
+
+BPF_PROGRAM = r"""
 #include <uapi/linux/ptrace.h>
 #include <net/sock.h>
 #include <bcc/proto.h>
 #include <linux/tcp.h>
 
-#undef __HAVE_BUILTIN_BSWAP32__
-#undef __HAVE_BUILTIN_BSWAP64__
-#undef __HAVE_BUILTIN_BSWAP16__
-
-// 两个通道：一个传 RTT 事件，一个传重传事件
 BPF_PERF_OUTPUT(rtt_events);
 BPF_PERF_OUTPUT(retrans_events);
 
@@ -28,104 +28,191 @@ struct rtt_data_t {
 };
 
 struct retrans_data_t {
-    u32 dummy; // 不需要传具体数据，只要触发一次就算一次重传
+    u32 dummy;
 };
 
-// --- 功能 1: 监控 RTT ---
 int trace_tcp_rcv(struct pt_regs *ctx, struct sock *sk)
 {
     struct tcp_sock *ts = (struct tcp_sock *)sk;
     u32 srtt = ts->srtt_us >> 3;
-    
-    // 过滤掉没数据的
+
     if (srtt == 0) return 0;
 
-    // 简单过滤：只看本机流量以外的，或者你可以不过滤，后期数据清洗
-    // 这里为了演示简单，全都要
-    
     struct rtt_data_t data = {};
     data.rtt = srtt;
     rtt_events.perf_submit(ctx, &data, sizeof(data));
     return 0;
 }
 
-// --- 功能 2: 监控重传 ---
 int trace_retransmit(struct pt_regs *ctx, struct sock *sk)
 {
-    // 过滤本地流量 (可选，这里简化逻辑先不写复杂过滤)
     struct retrans_data_t data = {};
     retrans_events.perf_submit(ctx, &data, sizeof(data));
     return 0;
 }
 """
 
-# ==========================================
-# 2. Python 用户态聚合逻辑
-# ==========================================
 
-print("正在初始化 Smart Agent (eBPF + CSV Logger)...")
-b = BPF(text=bpf_text)
+class SmartAgent:
+    def __init__(self, interval: float, window: int, csv_path: str, max_samples: int):
+        self.interval = interval
+        self.window = window
+        self.csv_path = csv_path
+        self.max_samples = max_samples
 
-# 挂载两个钩子
-b.attach_kprobe(event="tcp_rcv_established", fn_name="trace_tcp_rcv")
-b.attach_kprobe(event="tcp_retransmit_skb", fn_name="trace_retransmit")
+        self.bpf = BPF(text=BPF_PROGRAM)
+        self.bpf.attach_kprobe(event="tcp_rcv_established", fn_name="trace_tcp_rcv")
+        self.bpf.attach_kprobe(event="tcp_retransmit_skb", fn_name="trace_retransmit")
 
-# 数据缓存
-rtt_list = []
-retrans_count = 0
+        self.rtt_samples = []
+        self.retrans_count = 0
+        self.window_buffer = deque(maxlen=self.window)
 
-# 回调函数
-def handle_rtt(cpu, data, size):
-    event = b["rtt_events"].event(data)
-    global rtt_list
-    rtt_list.append(event.rtt)
+        self.bpf["rtt_events"].open_perf_buffer(self._handle_rtt)
+        self.bpf["retrans_events"].open_perf_buffer(self._handle_retrans)
 
-def handle_retrans(cpu, data, size):
-    global retrans_count
-    retrans_count += 1
+    # eBPF callbacks
+    def _handle_rtt(self, cpu, data, size):
+        event = self.bpf["rtt_events"].event(data)
+        if len(self.rtt_samples) < self.max_samples:
+            self.rtt_samples.append(event.rtt)
 
-# 打开 perf buffer
-b["rtt_events"].open_perf_buffer(handle_rtt)
-b["retrans_events"].open_perf_buffer(handle_retrans)
+    def _handle_retrans(self, cpu, data, size):
+        self.retrans_count += 1
 
-# 准备 CSV 文件
-csv_filename = "net_data.csv"
-with open(csv_filename, "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["timestamp", "avg_rtt_us", "retrans_count", "label"]) # label 用于后续标记是否异常
+    # Metrics helpers
+    def _percentile(self, values, pct):
+        if not values:
+            return 0
+        k = (len(values) - 1) * pct
+        f = int(k)
+        c = min(f + 1, len(values) - 1)
+        if f == c:
+            return values[f]
+        return values[f] + (values[c] - values[f]) * (k - f)
 
-print(f"开始采集！数据将写入 {csv_filename}")
-print("按 Ctrl+C 停止采集...")
-print("-" * 50)
-print(f"{'TIMESTAMP':<15} | {'AVG RTT (us)':<15} | {'RETRANS/s':<10}")
+    def _aggregate_metrics(self):
+        if not self.rtt_samples:
+            avg_rtt = p95_rtt = min_rtt = max_rtt = 0
+        else:
+            sorted_rtt = sorted(self.rtt_samples)
+            avg_rtt = int(statistics.fmean(sorted_rtt))
+            p95_rtt = int(self._percentile(sorted_rtt, 0.95))
+            min_rtt = sorted_rtt[0]
+            max_rtt = sorted_rtt[-1]
 
-try:
-    while True:
-        # 1. 收集 1 秒内的数据
-        time.sleep(1)
-        b.perf_buffer_poll(timeout=10) # 处理所有等待的事件
-        
-        # 2. 计算聚合指标
-        current_time = int(time.time())
-        
-        # 计算平均 RTT
-        avg_rtt = 0
-        if len(rtt_list) > 0:
-            avg_rtt = sum(rtt_list) // len(rtt_list)
-        
-        current_retrans = retrans_count
-        
-        # 3. 打印到屏幕
-        print(f"{current_time:<15} | {avg_rtt:<15} | {current_retrans:<10}")
-        
-        # 4. 写入 CSV (Label 默认为 0，表示正常，之后我们可以手动标记)
-        with open(csv_filename, "a", newline="") as f:
+        metrics = {
+            "timestamp": int(time.time()),
+            "avg_rtt_us": avg_rtt,
+            "p95_rtt_us": p95_rtt,
+            "min_rtt_us": min_rtt,
+            "max_rtt_us": max_rtt,
+            "retrans_count": self.retrans_count,
+            "rtt_samples": len(self.rtt_samples),
+        }
+
+        # update rolling window
+        self.window_buffer.append(metrics)
+        if self.window_buffer:
+            rolling_avg = statistics.fmean(m["avg_rtt_us"] for m in self.window_buffer)
+            rolling_p95 = statistics.fmean(m["p95_rtt_us"] for m in self.window_buffer)
+        else:
+            rolling_avg = rolling_p95 = 0
+
+        metrics.update({
+            "rolling_avg_rtt_us": int(rolling_avg),
+            "rolling_p95_rtt_us": int(rolling_p95),
+        })
+        return metrics
+
+    def _reset_counters(self):
+        self.rtt_samples = []
+        self.retrans_count = 0
+
+    def run(self):
+        print("Initializing Smart Agent (eBPF collector with enhanced metrics)...")
+        print("Press Ctrl+C to stop. Writing to", self.csv_path)
+        self._prepare_csv()
+        try:
+            while True:
+                self._poll_events()
+                metrics = self._aggregate_metrics()
+                self._write_row(metrics)
+                self._print_row(metrics)
+                self._reset_counters()
+        except KeyboardInterrupt:
+            print("\nStopping collector.")
+
+    def _poll_events(self):
+        start = time.time()
+        while time.time() - start < self.interval:
+            timeout_ms = int(max((self.interval - (time.time() - start)) * 1000, 1))
+            self.bpf.perf_buffer_poll(timeout=timeout_ms)
+
+    def _prepare_csv(self):
+        with open(self.csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow([current_time, avg_rtt, current_retrans, 0])
-        
-        # 5. 重置计数器，准备下一秒
-        rtt_list = []
-        retrans_count = 0
+            writer.writerow([
+                "timestamp",
+                "avg_rtt_us",
+                "p95_rtt_us",
+                "min_rtt_us",
+                "max_rtt_us",
+                "retrans_count",
+                "rtt_samples",
+                "rolling_avg_rtt_us",
+                "rolling_p95_rtt_us",
+                "label",
+            ])
 
-except KeyboardInterrupt:
-    print("\n采集结束。")
+    def _write_row(self, metrics):
+        with open(self.csv_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                metrics["timestamp"],
+                metrics["avg_rtt_us"],
+                metrics["p95_rtt_us"],
+                metrics["min_rtt_us"],
+                metrics["max_rtt_us"],
+                metrics["retrans_count"],
+                metrics["rtt_samples"],
+                metrics["rolling_avg_rtt_us"],
+                metrics["rolling_p95_rtt_us"],
+                0,
+            ])
+
+    def _print_row(self, metrics):
+        print(
+            f"{metrics['timestamp']:<15} | avg {metrics['avg_rtt_us']:<8}us | "
+            f"p95 {metrics['p95_rtt_us']:<8}us | retrans {metrics['retrans_count']:<5} | "
+            f"samples {metrics['rtt_samples']:<5} | roll_avg {metrics['rolling_avg_rtt_us']}us"
+        )
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Smart network telemetry collector")
+    parser.add_argument("--interval", type=float, default=1.0, help="aggregation interval in seconds")
+    parser.add_argument("--window", type=int, default=30, help="rolling window length (in intervals)")
+    parser.add_argument(
+        "--csv",
+        type=str,
+        default="net_data.csv",
+        help="path to write CSV measurements",
+    )
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=5000,
+        help="cap RTT samples per interval to avoid unbounded memory use",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    agent = SmartAgent(args.interval, args.window, args.csv, args.max_samples)
+    agent.run()
+
+
+if __name__ == "__main__":
+    main()
