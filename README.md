@@ -1,15 +1,15 @@
-# 🚀 SmartNetDiag: 基于 eBPF + AI 的智能网络诊断系统
+# 🚀 TokenFlow: 网络感知的 LLM 智能流控系统
 
-> **Smart Network Diagnostic System powered by eBPF & Isolation Forest**
+> **Network-Aware LLM Token Pacing System powered by eBPF & AI**
 
 [![eBPF](https://img.shields.io/badge/Linux-eBPF-orange.svg)](https://ebpf.io/)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
 [![AI](https://img.shields.io/badge/Model-Isolation%20Forest-green.svg)](https://scikit-learn.org/)
 [![Dashboard](https://img.shields.io/badge/Dashboard-Streamlit-red.svg)](https://streamlit.io/)
 
-SmartNetDiag 是一个轻量级、低开销的实时网络诊断系统。它利用 **eBPF (Extended Berkeley Packet Filter)** 技术在 Linux 内核态零拷贝采集 TCP 关键指标（RTT、重传），并结合 **孤立森林 (Isolation Forest)** 无监督学习算法，实现对网络异常（如拥塞、丢包）的实时检测与根因分析。
+TokenFlow (原 SmartNetDiag) 是一个轻量级、低开销的实时网络诊断与流控系统。它利用 **eBPF (Extended Berkeley Packet Filter)** 技术在 Linux 内核态零拷贝采集 TCP 关键指标（RTT、重传），并结合 **孤立森林 (Isolation Forest)** 和 **GBDT** 算法，实现对网络健康度的实时感知。
 
-更进一步，本项目探索了 **网络感知的 LLM 流控 (Network-Aware Token Pacing)**，利用实时网络健康度预测，动态调节大模型 Token 生成速率，实现“自适应流控”。
+更进一步，本项目探索了 **网络感知的 LLM 流控 (Network-Aware Token Pacing)**，利用实时网络健康度预测，动态调节大模型 Token 生成速率，实现“自适应流控”，在网络拥塞时自动降速以避免丢包，在网络通畅时全速生成。
 
 ---
 
@@ -148,5 +148,5 @@ Dashboard 能够毫秒级捕捉网络波动，并标记异常点。
 ---
 
 ### 👨‍💻 作者
-*   **姓名**：[你的名字]
+*   **姓名**：
 *   **专业**：计算机科学与技术
