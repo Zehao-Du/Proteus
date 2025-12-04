@@ -16,6 +16,13 @@ from bcc import BPF
 
 BPF_PROGRAM = r"""
 #include <uapi/linux/ptrace.h>
+#include <linux/types.h>
+
+struct bpf_wq {
+    int dummy;
+};
+
+#include <linux/bpf.h>
 #include <net/sock.h>
 #include <bcc/proto.h>
 #include <linux/tcp.h>

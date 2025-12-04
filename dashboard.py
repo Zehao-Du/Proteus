@@ -22,14 +22,17 @@ st.markdown("### Smart Network Diagnostic System powered by eBPF & Isolation For
 # 2. 加载 AI 模型
 # ==========================================
 @st.cache_resource
-def load_model():
+def load_model_bundle():
     try:
+        # train_model.py 保存的是一个字典: {"model": model, "scaler": scaler}
         return joblib.load("isolation_forest.pkl")
     except:
         st.error("未找到模型文件！请先运行 train_model.py")
         return None
 
-model = load_model()
+bundle = load_model_bundle()
+model = bundle["model"] if bundle else None
+scaler = bundle["scaler"] if bundle else None
 
 # ==========================================
 # 3. 实时读取数据函数
@@ -56,11 +59,18 @@ while True:
     
     if not df.empty and model is not None:
         # --- 数据预处理 ---
-        features = df[['avg_rtt_us', 'retrans_count']]
+        # 注意：这里需要和训练时使用的特征顺序完全一致
+        features = df[['avg_rtt_us', 'p95_rtt_us', 'retrans_count', 'rolling_avg_rtt_us', 'rolling_p95_rtt_us']]
+        
+        # 必须使用训练时的 scaler 进行同样的归一化，否则模型无法识别
+        if scaler:
+            features_scaled = scaler.transform(features)
+        else:
+            features_scaled = features
         
         # --- AI 推理 ---
         # 1为正常，-1为异常
-        predictions = model.predict(features)
+        predictions = model.predict(features_scaled)
         df['anomaly'] = predictions
         
         # 获取最新的一条数据
