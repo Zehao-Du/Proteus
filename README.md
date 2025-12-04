@@ -20,6 +20,7 @@ SmartNetDiag/
 ├── 📄 chaos_maker.py      # [测试工具] 基于 tc 的网络故障注入器
 ├── 📄 train_model.py      # [智能平面] 读取 CSV 数据，训练模型并评估
 ├── 📄 dashboard.py        # [应用平面] Streamlit 实时监控仪表盘
+├── 📄 adaptive_token_pacer.py  # [LLM 侧边车] 按网络状态自适应节流 LLM token 速率
 ├── 📄 visualize_data.py   # [分析工具] 简单的数据分布可视化脚本
 ├── 📄 requirements.txt    # Python 依赖库列表
 └── 📄 README.md           # 项目说明文档
@@ -88,19 +89,32 @@ sudo bash run_experiment.sh
 *   **输出**：数据将实时写入 `net_data.csv`。
 *   **操作**：运行约 5-10 分钟后，按 `Ctrl+C` 停止实验。
 
+**自定义采集参数（更平滑、更高性能）**
+
+如果只想运行采集器，也可以单独启动 `smart_agent.py` 并调整以下参数：
+
+```bash
+sudo python3 smart_agent.py --interval 0.5 --window 60 --csv /tmp/net_data.csv --max-samples 8000
+```
+
+* `--interval`: 聚合周期（秒），默认 1s；调小可加快响应，调大则降低开销。
+* `--window`: 滑动窗口长度（以周期计），用于计算平滑的滚动均值/95 分位 RTT。
+* `--max-samples`: 每周期采样的 RTT 上限，防止高并发下内存过大。
+* 自动输出 **最小/最大/平均/95 分位 RTT** 与重传计数，并增加滚动指标列，方便模型吸收时间趋势。
+
 ### 第二步：模型训练 (Model Training)
 
 利用采集到的 `net_data.csv`，训练 Isolation Forest 模型。
 
 ```bash
-python3 train_model.py
+python3 train_model.py --data net_data.csv --contamination 0.15 --estimators 200
 ```
 
 *   **功能**：
-    *   清洗数据。
-    *   训练无监督异常检测模型。
-    *   生成可视化散点图 `model_result.png` 以验证模型效果。
-*   **输出**：生成模型文件 `isolation_forest.pkl`。
+    *   清洗数据并自动过滤缺失特征。
+    *   标准化特征、训练无监督异常检测模型，并做快速留出验证。
+    *   生成可视化散点图 `model_result.png` 与训练摘要 `training_metrics.json`。
+*   **输出**：生成模型文件 `isolation_forest.pkl`（内含 scaler 与模型）。
 
 ### 第三步：启动实时监控看板 (Dashboard)
 
@@ -117,6 +131,35 @@ streamlit run dashboard.py
 *   **功能演示**：
     *   观察 RTT 实时折线图。
     *   当后台注入故障时，观察右上角 AI 状态是否变为 🔴 **异常**。
+
+### 第四步：LLM Token 匀速生成（网络自适应节流）
+
+面向「云端 LLM 生成速率固定、客户端网络波动导致 token 浪费」的问题，新增 `adaptive_token_pacer.py` 作为 **LLM 侧边车**：
+
+1.  **采集网络健康度**：继续运行 `smart_agent.py`（或 `run_experiment.sh`）实时写入 `net_data.csv`。
+2.  **按网络动态节流 token**：在推理侧用 pacer 包裹生成流，将 token 速率限制为链路可承载的速率，避免云端过度生成。
+3.  **云端可查询的 Hint Server**：`--serve <port>` 会启动轻量 HTTP JSON 服务，云端 LLM 只需周期性 `GET /` 获取 `current_tps` 与推荐 `sleep_seconds`，即可在生成循环中自适应休眠，做到「能传多少就生成多少」。
+
+```bash
+# 示例：按词粒度匀速输出文本，RTT 升高或重传激增时自动降速
+python3 adaptive_token_pacer.py "Once upon a time in a network-aware LLM..." \
+  --csv net_data.csv --max-tps 60 --min-tps 5 --mode word
+```
+
+```bash
+# 示例：云端推理循环伪代码（Python）
+# 每 0.5s 查询 Hint Server，按返回的 sleep_seconds 控制 tokenizer 逐 token 发送
+curl http://localhost:9000 | jq
+
+while streaming:
+  hint = requests.get("http://localhost:9000", timeout=0.2).json()
+  next_token = llm.generate_next()
+  send_to_client(next_token)
+  time.sleep(hint["sleep_seconds"])
+```
+
+* 算法思路：将 95 分位 RTT 与重传计数映射为「链路质量系数」，对最大 token/s 做指数滑动平均的调节，并通过 HTTP 暴露实时速率建议。
+* 部署方式：在云端 LLM 服务器的 streaming 线程里调用 pacer（或移植其逻辑/HTTP 查询）来控制生成速率；也可在边缘代理上按 pacer 节奏向客户端回推，确保「能传多少、就生成多少」。
 
 ---
 
@@ -139,8 +182,40 @@ Dashboard 能够毫秒级捕捉网络波动，并标记异常点。
 
 *   **零侵入性**：基于 eBPF 技术，无需修改内核源码，无需重启应用，性能开销极低。
 *   **真实指标**：通过 Hook `tcp_rcv_established` 和 `tcp_retransmit_skb`，获取内核协议栈真实的 RTT 和重传事件，比 Ping 更准确。
-*   **智能诊断**：摒弃传统的静态阈值报警，使用 **Isolation Forest** 自动学习网络基线，能够适应不同的网络环境。
+*   **增强型特征**：实时输出最小/最大/平均/95 分位 RTT、重传计数以及滚动均值/分位数，既能反映瞬时尖峰，又能平滑趋势。
+*   **智能诊断**：摒弃传统的静态阈值报警，使用 **Isolation Forest** 自动学习网络基线，能够适应不同的网络环境，并将训练摘要写入 `training_metrics.json` 方便复现。
 *   **全栈闭环**：实现了从底层内核采集、故障模拟、模型训练到上层可视化展示的完整工程链路。
+
+---
+
+## 🎓 作为课程大作业的呈现要点（Pre 指南）
+
+如果需要在课堂答辩或预习展示中讲解本项目，可以按以下结构准备材料：
+
+### 1. 选题背景与目标
+* **痛点**：传统 ping/iperf 难以提供内核态真实指标，且阈值告警对动态环境不鲁棒。
+* **目标**：低开销采集 TCP RTT/重传 → 无监督检测拥塞/丢包 → 实时可视化与根因提示。
+
+### 2. 系统架构与分层
+* **数据面**：`smart_agent.py` 的 eBPF 探针挂载 `tcp_rcv_established`、`tcp_retransmit_skb`，秒级聚合写入 `net_data.csv`。
+* **故障注入**：`chaos_maker.py` 使用 `tc qdisc` 制造高延迟/丢包，便于展示检测效果。
+* **智能面**：`train_model.py` 训练 Isolation Forest，输出 `isolation_forest.pkl` 与可视化 `model_result.png`。
+* **应用面**：`dashboard.py` 用 Streamlit 展示实时 RTT/重传曲线与异常状态灯。
+
+### 3. Demo 流程脚本（适合课堂演示）
+1. `sudo bash run_experiment.sh` 启动采集 + 流量 + 故障注入，运行 3~5 分钟。
+2. 终端 A 观察 `net_data.csv` 实时累积；终端 B 执行 `python3 train_model.py` 并展示 `model_result.png`。
+3. 重新开启 `run_experiment.sh` 后，在新终端运行 `streamlit run dashboard.py`，现场演示仪表盘切换为 🔴 异常的瞬态效果。
+
+### 4. 评测与亮点总结
+* **指标**：告警准确率（TP/FP）、平均检测时延（秒级）、采样开销（CPU/内存占用）。
+* **对比**：可与 ping RTT 阈值法对比，突出无监督模型对动态基线的适应性。
+* **可扩展性**：同样框架可替换为 PCA/AutoEncoder 等模型，或增加 HTTP/UDP 指标。
+
+### 5. 局限与改进方向（Q&A 预案）
+* 现有模型基于单机单特征（RTT/重传），未覆盖跨机拓扑或业务日志；可引入分布式采集与多模态特征。
+* 随机故障注入较简单，可使用 tc netem 组合更复杂的丢包/抖动分布，或基于 `iperf3` 构建带宽压力场景。
+* 仪表盘为原型界面，可添加告警历史、事件时间轴、导出报告等功能。课堂展示时可以用这些改进点引出讨论。
 
 ---
 

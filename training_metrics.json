@@ -1,0 +1,26 @@
+{
+  "samples": 296,
+  "features": [
+    "avg_rtt_us",
+    "p95_rtt_us",
+    "retrans_count",
+    "rolling_avg_rtt_us",
+    "rolling_p95_rtt_us"
+  ],
+  "contamination": 0.2,
+  "estimators": 150,
+  "metrics": {
+    "confusion_matrix": [
+      [
+        52,
+        8
+      ],
+      [
+        0,
+        0
+      ]
+    ],
+    "normal_precision": 0.8666666666666667,
+    "anomaly_precision": 0.0
+  }
+}

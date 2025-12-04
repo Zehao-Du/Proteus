@@ -1,57 +1,61 @@
+#!/usr/bin/env python3
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import IsolationForest
-import joblib # 用于保存模型
-import matplotlib.pyplot as plt
+import joblib
+from sklearn.ensemble import IsolationForest, GradientBoostingRegressor
+from sklearn.preprocessing import StandardScaler
+import os
+import argparse
 
-# 1. 加载数据
-print("Loading data...")
-df = pd.read_csv("net_data.csv")
+def train():
+    data_path = "net_data.csv"
+    if not os.path.exists(data_path):
+        print(f"❌ Data file {data_path} not found. Run smart_agent.py first.")
+        return
 
-# 简单的数据清洗：去掉空值
-df = df.dropna()
+    print("🔄 Loading data...")
+    try:
+        df = pd.read_csv(data_path)
+    except Exception as e:
+        print(f"❌ Error reading CSV: {e}")
+        return
 
-# 选取特征：RTT 和 Retrans
-features = ['avg_rtt_us', 'retrans_count']
-X = df[features]
+    if df.empty or len(df) < 10:
+        print("⚠️ Not enough data to train. Need at least 10 samples.")
+        return
 
-# 2. 训练模型
-print("Training Isolation Forest Model...")
-# contamination=0.1 表示我们要告诉模型：“大概有 10% 的数据是异常的”
-# 如果你的实验里大部分时间都在制造故障，这个值可以调大，比如 0.3
-model = IsolationForest(n_estimators=100, contamination=0.2, random_state=42)
-model.fit(X)
+    # Feature selection
+    # We use columns available in smart_agent.py output
+    feature_cols = ['avg_rtt_us', 'p95_rtt_us', 'retrans_count', 'rolling_avg_rtt_us', 'rolling_p95_rtt_us']
+    
+    # Drop rows with missing values
+    df_clean = df.dropna(subset=feature_cols)
+    X = df_clean[feature_cols]
+    
+    # Scaling
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
 
-# 3. 预测（验证一下效果）
-df['anomaly'] = model.predict(X)
-# Isolation Forest 的输出：1 是正常，-1 是异常
-df['label'] = df['anomaly'].apply(lambda x: "Normal" if x == 1 else "Anomaly")
+    print("🧠 Training Isolation Forest (Anomaly Detection)...")
+    iso = IsolationForest(contamination=0.1, random_state=42, n_jobs=-1)
+    iso.fit(X_scaled)
+    
+    print("📈 Training GBDT (RTT Prediction)...")
+    # Target: Next period's rolling_avg_rtt_us
+    y = df_clean["rolling_avg_rtt_us"].shift(-1).fillna(df_clean["rolling_avg_rtt_us"].iloc[-1])
+    
+    gbdt = GradientBoostingRegressor(n_estimators=100, random_state=42)
+    gbdt.fit(X_scaled, y)
+    
+    # Save Isolation Forest for Dashboard (bundle format)
+    iso_bundle = {"model": iso, "scaler": scaler}
+    joblib.dump(iso_bundle, "isolation_forest.pkl")
+    print("✅ Saved isolation_forest.pkl (for Dashboard)")
 
-print("-" * 30)
-print("模型评估预览:")
-print(df['label'].value_counts())
-print("-" * 30)
+    # Save GBDT for Pacer
+    gbdt_bundle = {"model": gbdt, "scaler": scaler}
+    joblib.dump(gbdt_bundle, "gbdt_model.pkl")
+    print("✅ Saved gbdt_model.pkl (for Pacer)")
 
-# 4. 保存模型
-joblib.dump(model, "isolation_forest.pkl")
-print("✅ 模型已保存为 isolation_forest.pkl")
-
-# 5. 可视化训练结果 (画出异常点)
-plt.figure(figsize=(10, 6))
-
-# 画正常点 (绿色)
-normal = df[df['anomaly'] == 1]
-plt.scatter(normal['avg_rtt_us'], normal['retrans_count'], c='green', alpha=0.5, label='Normal')
-
-# 画异常点 (红色)
-anomaly = df[df['anomaly'] == -1]
-plt.scatter(anomaly['avg_rtt_us'], anomaly['retrans_count'], c='red', alpha=0.6, marker='x', label='Anomaly')
-
-plt.title("AI Detection Result: Normal vs Anomaly")
-plt.xlabel("RTT (us)")
-plt.ylabel("Retransmission Count")
-plt.legend()
-plt.grid(True, alpha=0.3)
-
-plt.savefig("model_result.png")
-print("✅ 结果图已保存为 model_result.png")
+if __name__ == "__main__":
+    train()

@@ -1,0 +1,194 @@
+In file included from /virtual/main.c:2:
+In file included from include/uapi/linux/ptrace.h:183:
+In file included from arch/x86/include/asm/ptrace.h:175:
+In file included from arch/x86/include/asm/paravirt_types.h:12:
+In file included from arch/x86/include/asm/nospec-branch.h:15:
+arch/x86/include/asm/current.h:47:10: warning: multiple identical address spaces specified for type [-Wduplicate-decl-specifier]
+   47 |                 return this_cpu_read_const(const_pcpu_hot.current_task);
+      |                        ^
+arch/x86/include/asm/percpu.h:578:36: note: expanded from macro 'this_cpu_read_const'
+  578 | #define this_cpu_read_const(pcp)                        __raw_cpu_read_const(pcp)
+      |                                                         ^
+arch/x86/include/asm/percpu.h:163:35: note: expanded from macro '__raw_cpu_read_const'
+  163 | #define __raw_cpu_read_const(pcp)       __raw_cpu_read(, , pcp)
+      |                                         ^
+arch/x86/include/asm/percpu.h:155:30: note: expanded from macro '__raw_cpu_read'
+  155 |         *(qual __my_cpu_type(pcp) *)__my_cpu_ptr(&(pcp));               \
+      |                                     ^
+note: (skipping 1 expansions in backtrace; use -fmacro-backtrace-limit=0 to see all)
+arch/x86/include/asm/percpu.h:94:40: note: expanded from macro '__my_cpu_type'
+   94 | #define __my_cpu_type(var)      typeof(var) __percpu_seg_override
+      |                                             ^
+arch/x86/include/asm/percpu.h:45:32: note: expanded from macro '__percpu_seg_override'
+   45 | # define __percpu_seg_override  __seg_gs
+      |                                 ^
+<built-in>:358:33: note: expanded from macro '__seg_gs'
+  358 | #define __seg_gs __attribute__((address_space(256)))
+      |                                 ^
+In file included from /virtual/main.c:2:
+In file included from include/uapi/linux/ptrace.h:183:
+In file included from arch/x86/include/asm/ptrace.h:175:
+In file included from arch/x86/include/asm/paravirt_types.h:12:
+In file included from arch/x86/include/asm/nospec-branch.h:15:
+arch/x86/include/asm/current.h:47:10: warning: multiple identical address spaces specified for type [-Wduplicate-decl-specifier]
+arch/x86/include/asm/percpu.h:578:36: note: expanded from macro 'this_cpu_read_const'
+  578 | #define this_cpu_read_const(pcp)                        __raw_cpu_read_const(pcp)
+      |                                                         ^
+arch/x86/include/asm/percpu.h:163:35: note: expanded from macro '__raw_cpu_read_const'
+  163 | #define __raw_cpu_read_const(pcp)       __raw_cpu_read(, , pcp)
+      |                                         ^
+arch/x86/include/asm/percpu.h:155:9: note: expanded from macro '__raw_cpu_read'
+  155 |         *(qual __my_cpu_type(pcp) *)__my_cpu_ptr(&(pcp));               \
+      |                ^
+arch/x86/include/asm/percpu.h:94:40: note: expanded from macro '__my_cpu_type'
+   94 | #define __my_cpu_type(var)      typeof(var) __percpu_seg_override
+      |                                             ^
+arch/x86/include/asm/percpu.h:45:32: note: expanded from macro '__percpu_seg_override'
+   45 | # define __percpu_seg_override  __seg_gs
+      |                                 ^
+<built-in>:358:33: note: expanded from macro '__seg_gs'
+  358 | #define __seg_gs __attribute__((address_space(256)))
+      |                                 ^
+In file included from /virtual/main.c:9:
+In file included from include/linux/bpf.h:10:
+In file included from include/linux/workqueue.h:9:
+In file included from include/linux/timer.h:6:
+In file included from include/linux/ktime.h:25:
+In file included from include/linux/jiffies.h:10:
+In file included from include/linux/time.h:60:
+In file included from include/linux/time32.h:13:
+In file included from include/linux/timex.h:67:
+In file included from arch/x86/include/asm/timex.h:5:
+arch/x86/include/asm/processor.h:564:10: warning: multiple identical address spaces specified for type [-Wduplicate-decl-specifier]
+  564 |                 return this_cpu_read_const(const_pcpu_hot.top_of_stack);
+      |                        ^
+arch/x86/include/asm/percpu.h:578:36: note: expanded from macro 'this_cpu_read_const'
+  578 | #define this_cpu_read_const(pcp)                        __raw_cpu_read_const(pcp)
+      |                                                         ^
+arch/x86/include/asm/percpu.h:163:35: note: expanded from macro '__raw_cpu_read_const'
+  163 | #define __raw_cpu_read_const(pcp)       __raw_cpu_read(, , pcp)
+      |                                         ^
+arch/x86/include/asm/percpu.h:155:30: note: expanded from macro '__raw_cpu_read'
+  155 |         *(qual __my_cpu_type(pcp) *)__my_cpu_ptr(&(pcp));               \
+      |                                     ^
+note: (skipping 1 expansions in backtrace; use -fmacro-backtrace-limit=0 to see all)
+arch/x86/include/asm/percpu.h:94:40: note: expanded from macro '__my_cpu_type'
+   94 | #define __my_cpu_type(var)      typeof(var) __percpu_seg_override
+      |                                             ^
+arch/x86/include/asm/percpu.h:45:32: note: expanded from macro '__percpu_seg_override'
+   45 | # define __percpu_seg_override  __seg_gs
+      |                                 ^
+<built-in>:358:33: note: expanded from macro '__seg_gs'
+  358 | #define __seg_gs __attribute__((address_space(256)))
+      |                                 ^
+In file included from /virtual/main.c:9:
+In file included from include/linux/bpf.h:10:
+In file included from include/linux/workqueue.h:9:
+In file included from include/linux/timer.h:6:
+In file included from include/linux/ktime.h:25:
+In file included from include/linux/jiffies.h:10:
+In file included from include/linux/time.h:60:
+In file included from include/linux/time32.h:13:
+In file included from include/linux/timex.h:67:
+In file included from arch/x86/include/asm/timex.h:5:
+arch/x86/include/asm/processor.h:564:10: warning: multiple identical address spaces specified for type [-Wduplicate-decl-specifier]
+arch/x86/include/asm/percpu.h:578:36: note: expanded from macro 'this_cpu_read_const'
+  578 | #define this_cpu_read_const(pcp)                        __raw_cpu_read_const(pcp)
+      |                                                         ^
+arch/x86/include/asm/percpu.h:163:35: note: expanded from macro '__raw_cpu_read_const'
+  163 | #define __raw_cpu_read_const(pcp)       __raw_cpu_read(, , pcp)
+      |                                         ^
+arch/x86/include/asm/percpu.h:155:9: note: expanded from macro '__raw_cpu_read'
+  155 |         *(qual __my_cpu_type(pcp) *)__my_cpu_ptr(&(pcp));               \
+      |                ^
+arch/x86/include/asm/percpu.h:94:40: note: expanded from macro '__my_cpu_type'
+   94 | #define __my_cpu_type(var)      typeof(var) __percpu_seg_override
+      |                                             ^
+arch/x86/include/asm/percpu.h:45:32: note: expanded from macro '__percpu_seg_override'
+   45 | # define __percpu_seg_override  __seg_gs
+      |                                 ^
+<built-in>:358:33: note: expanded from macro '__seg_gs'
+  358 | #define __seg_gs __attribute__((address_space(256)))
+      |                                 ^
+4 warnings generated.
+Initializing Smart Agent (eBPF collector with enhanced metrics)...
+Press Ctrl+C to stop. Writing to net_data.csv
+1764818168      | avg 50635   us | p95 251482  us | retrans 0     | samples 41    | roll_avg 50635us
+1764818169      | avg 89694   us | p95 251436  us | retrans 0     | samples 110   | roll_avg 70164us
+1764818170      | avg 87814   us | p95 246955  us | retrans 0     | samples 132   | roll_avg 76047us
+1764818171      | avg 83352   us | p95 268871  us | retrans 0     | samples 181   | roll_avg 77873us
+1764818172      | avg 89805   us | p95 246322  us | retrans 0     | samples 182   | roll_avg 80260us
+1764818173      | avg 84967   us | p95 240589  us | retrans 0     | samples 136   | roll_avg 81044us
+1764818174      | avg 85134   us | p95 243329  us | retrans 0     | samples 136   | roll_avg 81628us
+1764818175      | avg 89553   us | p95 291174  us | retrans 1     | samples 150   | roll_avg 82619us
+1764818176      | avg 87105   us | p95 266958  us | retrans 0     | samples 189   | roll_avg 83117us
+1764818177      | avg 87805   us | p95 242805  us | retrans 0     | samples 151   | roll_avg 83586us
+1764818178      | avg 93808   us | p95 248214  us | retrans 0     | samples 143   | roll_avg 84515us
+1764818179      | avg 83979   us | p95 239905  us | retrans 0     | samples 149   | roll_avg 84470us
+1764818180      | avg 90678   us | p95 238734  us | retrans 0     | samples 132   | roll_avg 84948us
+1764818181      | avg 66740   us | p95 239936  us | retrans 0     | samples 166   | roll_avg 83647us
+1764818182      | avg 81423   us | p95 241065  us | retrans 0     | samples 160   | roll_avg 83499us
+1764818183      | avg 90446   us | p95 246322  us | retrans 0     | samples 149   | roll_avg 83933us
+1764818184      | avg 86498   us | p95 243604  us | retrans 0     | samples 148   | roll_avg 84084us
+1764818185      | avg 101114  us | p95 240796  us | retrans 0     | samples 128   | roll_avg 85030us
+1764818186      | avg 102557  us | p95 318390  us | retrans 0     | samples 177   | roll_avg 85953us
+1764818187      | avg 88826   us | p95 255204  us | retrans 0     | samples 160   | roll_avg 86096us
+1764818188      | avg 96097   us | p95 264306  us | retrans 0     | samples 153   | roll_avg 86572us
+1764818189      | avg 85753   us | p95 250421  us | retrans 0     | samples 142   | roll_avg 86535us
+1764818190      | avg 94634   us | p95 248776  us | retrans 0     | samples 147   | roll_avg 86887us
+1764818191      | avg 82862   us | p95 238649  us | retrans 0     | samples 173   | roll_avg 86719us
+1764818192      | avg 88042   us | p95 240051  us | retrans 0     | samples 149   | roll_avg 86772us
+1764818193      | avg 85974   us | p95 244091  us | retrans 0     | samples 151   | roll_avg 86742us
+1764818194      | avg 97975   us | p95 282447  us | retrans 0     | samples 142   | roll_avg 87158us
+1764818195      | avg 141665  us | p95 421847  us | retrans 0     | samples 126   | roll_avg 89104us
+1764818196      | avg 105899  us | p95 329427  us | retrans 0     | samples 169   | roll_avg 89683us
+1764818197      | avg 95381   us | p95 279938  us | retrans 0     | samples 171   | roll_avg 89873us
+1764818198      | avg 93945   us | p95 273035  us | retrans 0     | samples 148   | roll_avg 91317us
+1764818199      | avg 91586   us | p95 266758  us | retrans 0     | samples 145   | roll_avg 91380us
+1764818200      | avg 70437   us | p95 280134  us | retrans 0     | samples 120   | roll_avg 90801us
+1764818201      | avg 92043   us | p95 254932  us | retrans 0     | samples 187   | roll_avg 91091us
+1764818202      | avg 91901   us | p95 251741  us | retrans 0     | samples 157   | roll_avg 91160us
+1764818203      | avg 91622   us | p95 247937  us | retrans 0     | samples 151   | roll_avg 91382us
+1764818204      | avg 110686  us | p95 250311  us | retrans 0     | samples 120   | roll_avg 92234us
+1764818205      | avg 90351   us | p95 240009  us | retrans 0     | samples 150   | roll_avg 92261us
+1764818206      | avg 93270   us | p95 245959  us | retrans 0     | samples 170   | roll_avg 92466us
+1764818207      | avg 92919   us | p95 238585  us | retrans 0     | samples 156   | roll_avg 92637us
+1764818208      | avg 92007   us | p95 245626  us | retrans 0     | samples 151   | roll_avg 92577us
+1764818209      | avg 93336   us | p95 244136  us | retrans 0     | samples 151   | roll_avg 92888us
+1764818210      | avg 92435   us | p95 243072  us | retrans 0     | samples 135   | roll_avg 92947us
+1764818211      | avg 92849   us | p95 338862  us | retrans 0     | samples 67    | roll_avg 93817us
+1764818212      | avg 119674  us | p95 445166  us | retrans 0     | samples 87    | roll_avg 95092us
+1764818213      | avg 178825  us | p95 512419  us | retrans 0     | samples 28    | roll_avg 98038us
+1764818214      | avg 192398  us | p95 527037  us | retrans 0     | samples 34    | roll_avg 101568us
+1764818215      | avg 142401  us | p95 402999  us | retrans 0     | samples 22    | roll_avg 102945us
+1764818216      | avg 57493   us | p95 334506  us | retrans 0     | samples 24    | roll_avg 101442us
+1764818217      | avg 93169   us | p95 290095  us | retrans 0     | samples 68    | roll_avg 101587us
+1764818218      | avg 86808   us | p95 271221  us | retrans 0     | samples 53    | roll_avg 101278us
+1764818219      | avg 52119   us | p95 265092  us | retrans 0     | samples 90    | roll_avg 100156us
+1764818220      | avg 93337   us | p95 242521  us | retrans 0     | samples 160   | roll_avg 100113us
+1764818221      | avg 96656   us | p95 241704  us | retrans 0     | samples 157   | roll_avg 100573us
+1764818222      | avg 100021  us | p95 258633  us | retrans 0     | samples 187   | roll_avg 100972us
+1764818223      | avg 86775   us | p95 241879  us | retrans 0     | samples 171   | roll_avg 100999us
+1764818224      | avg 93095   us | p95 246373  us | retrans 0     | samples 168   | roll_avg 100836us
+1764818225      | avg 133227  us | p95 391029  us | retrans 3     | samples 128   | roll_avg 100555us
+1764818226      | avg 164675  us | p95 395340  us | retrans 3     | samples 124   | roll_avg 102514us
+1764818227      | avg 140383  us | p95 397163  us | retrans 4     | samples 162   | roll_avg 104014us
+1764818228      | avg 165094  us | p95 398419  us | retrans 5     | samples 122   | roll_avg 106386us
+1764818229      | avg 195338  us | p95 393756  us | retrans 4     | samples 149   | roll_avg 109844us
+1764818230      | avg 161726  us | p95 393175  us | retrans 4     | samples 117   | roll_avg 112887us
+1764818231      | avg 149515  us | p95 402740  us | retrans 4     | samples 81    | roll_avg 114803us
+1764818232      | avg 84867   us | p95 395223  us | retrans 1     | samples 107   | roll_avg 114569us
+1764818233      | avg 167442  us | p95 396436  us | retrans 5     | samples 101   | roll_avg 117096us
+1764818234      | avg 128210  us | p95 393348  us | retrans 1     | samples 95    | roll_avg 117680us
+1764818235      | avg 139814  us | p95 467151  us | retrans 2     | samples 94    | roll_avg 119329us
+1764818236      | avg 128362  us | p95 440897  us | retrans 1     | samples 115   | roll_avg 120499us
+1764818237      | avg 86652   us | p95 429707  us | retrans 1     | samples 64    | roll_avg 120290us
+1764818238      | avg 126720  us | p95 405004  us | retrans 2     | samples 87    | roll_avg 121447us
+1764818239      | avg 104985  us | p95 412912  us | retrans 4     | samples 60    | roll_avg 121835us
+1764818240      | avg 175018  us | p95 434998  us | retrans 1     | samples 55    | roll_avg 124588us
+1764818241      | avg 48851   us | p95 397088  us | retrans 4     | samples 51    | roll_avg 123121us
+1764818242      | avg 85658   us | p95 412732  us | retrans 1     | samples 76    | roll_avg 121987us
+1764818243      | avg 70948   us | p95 410646  us | retrans 0     | samples 48    | roll_avg 118391us
+1764818244      | avg 88267   us | p95 409273  us | retrans 1     | samples 81    | roll_avg 114920us
+1764818245      | avg 97802   us | p95 437114  us | retrans 1     | samples 48    | roll_avg 113434us
+1764818246      | avg 56203   us | p95 411395  us | retrans 1     | samples 42    | roll_avg 113391us
