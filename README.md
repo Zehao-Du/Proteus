@@ -9,22 +9,76 @@
 
 SmartNetDiag 是一个轻量级、低开销的实时网络诊断系统。它利用 **eBPF (Extended Berkeley Packet Filter)** 技术在 Linux 内核态零拷贝采集 TCP 关键指标（RTT、重传），并结合 **孤立森林 (Isolation Forest)** 无监督学习算法，实现对网络异常（如拥塞、丢包）的实时检测与根因分析。
 
+更进一步，本项目探索了 **网络感知的 LLM 流控 (Network-Aware Token Pacing)**，利用实时网络健康度预测，动态调节大模型 Token 生成速率，实现“自适应流控”。
+
 ---
 
 ## 📂 项目目录结构
 
 ```text
 SmartNetDiag/
-├── 📄 run_experiment.sh   # [一键启动] 自动化实验脚本 (采集+流量+故障注入)
-├── 📄 smart_agent.py      # [数据平面] eBPF 探针，负责内核数据采集与清洗
-├── 📄 chaos_maker.py      # [测试工具] 基于 tc 的网络故障注入器
-├── 📄 train_model.py      # [智能平面] 读取 CSV 数据，训练模型并评估
-├── 📄 dashboard.py        # [应用平面] Streamlit 实时监控仪表盘
-├── 📄 adaptive_token_pacer.py  # [LLM 侧边车] 按网络状态自适应节流 LLM token 速率
-├── 📄 visualize_data.py   # [分析工具] 简单的数据分布可视化脚本
+├── 📄 run_experiment.sh   # [一键启动] 完整系统编排 (采集+流量+训练+流控+模拟)
+├── 📄 smart_agent.py      # [数据面] eBPF 探针，采集内核 TCP RTT/重传
+├── 📄 train_model.py      # [智能面] 训练 Isolation Forest (异常检测) + GBDT (RTT预测)
+├── 📄 hint_server.py      # [控制面] HTTP 服务，提供 Token Pacing 速率建议 (新增)
+├── 📄 llm_simulator.py    # [应用面] 模拟 LLM Token 生成，演示自适应流控 (新增)
+├── 📄 dashboard.py        # [可视化] Streamlit 实时监控看板
+├── 📄 plot_pacing_effect.py # [可视化] 绘制 Pacing 效果对比图
+├── 📄 chaos_maker.py      # [测试] 网络故障注入工具
+├── 📄 ROADMAP.md          # [规划] 项目后续开发路线图与分工
 ├── 📄 requirements.txt    # Python 依赖库列表
 └── 📄 README.md           # 项目说明文档
 ```
+
+---
+
+## 🚀 快速开始 (Quick Start)
+
+### 1. 完整演示 (End-to-End Demo)
+
+使用一键脚本启动整个系统，包括 eBPF 采集、模型训练、流控服务和 LLM 模拟：
+
+```bash
+# ⚠️ 需要 sudo 权限以加载 eBPF 程序
+sudo bash run_experiment.sh
+```
+
+**观察效果**：
+1. 脚本会自动启动各个组件。
+2. 当后台注入网络故障时，你会看到 LLM Simulator 的输出速率 (`Rate: ... tps`) 自动下降。
+3. 当故障恢复时，速率会自动回升。
+
+### 2. 实时看板 (Dashboard)
+
+在另一个终端启动 Web 看板，查看实时网络状态和 AI 诊断结果：
+
+```bash
+streamlit run dashboard.py
+```
+
+### 3. 可视化分析
+
+生成 RTT 与 Token Rate 的对比图，验证流控效果：
+
+```bash
+python plot_pacing_effect.py
+```
+
+---
+
+## 🔮 进阶功能：LLM 自适应流控 (Token Pacing)
+
+本项目不仅仅是监控，还实现了 **网络感知的闭环控制**：
+
+1.  **Hint Server**: (`hint_server.py`) 
+    *   读取实时网络数据。
+    *   调用 **GBDT 模型** 预测未来网络趋势。
+    *   通过 HTTP 接口暴露推荐的 `token_rate`。
+
+2.  **LLM Integration**: (`llm_simulator.py`)
+    *   在 Token 生成循环中，周期性查询 Hint Server。
+    *   根据推荐速率动态调整发送间隔 (`sleep`)。
+    *   **效果**：在网络拥塞时自动“刹车”，防止丢包重传导致的卡顿；在网络通畅时全速生成。
 
 ---
 
@@ -44,10 +98,6 @@ sudo apt update
 sudo apt install -y bison flex build-essential libssl-dev libelf-dev zlib1g-dev \
 libfl-dev systemtap-sdt-dev clang llvm \
 bpfcc-tools python3-bpfcc libbpfcc libbpfcc-dev linux-headers-$(uname -r)
-
-# 仅限 WSL2 用户：
-# 如果遇到头文件缺失问题，需手动下载微软 WSL2 内核源码并编译头文件。
-# (此处省略详细 WSL2 内核编译步骤，具体参考项目文档)
 ```
 
 ### 2. Python 依赖安装
@@ -57,109 +107,12 @@ bpfcc-tools python3-bpfcc libbpfcc libbpfcc-dev linux-headers-$(uname -r)
 pip3 install -r requirements.txt
 ```
 
-*`requirements.txt` 内容参考：*
-```text
-numpy
-pandas
-scikit-learn
-streamlit
-matplotlib
-joblib
-altair
-```
-
 ---
 
-## 🚀 快速开始 (Workflow)
+## 🗺️ 后续规划 (Roadmap)
 
-整个系统分为三个阶段：**数据采集 → 模型训练 → 实时监控**。
-
-### 第一步：数据采集与故障模拟 (Data Collection)
-
-我们提供了一个自动化脚本，它会同时启动：
-1.  **Smart Agent**: eBPF 探针，采集 RTT 和重传数据。
-2.  **Traffic Generator**: 后台运行 `wget` 维持长连接流量。
-3.  **Chaos Maker**: 使用 `tc` (Traffic Control) 随机注入“高延迟”或“丢包”故障。
-
-```bash
-# ⚠️ 必须使用 sudo 运行，因为 eBPF 需要 root 权限
-sudo bash run_experiment.sh
-```
-
-*   **输出**：数据将实时写入 `net_data.csv`。
-*   **操作**：运行约 5-10 分钟后，按 `Ctrl+C` 停止实验。
-
-**自定义采集参数（更平滑、更高性能）**
-
-如果只想运行采集器，也可以单独启动 `smart_agent.py` 并调整以下参数：
-
-```bash
-sudo python3 smart_agent.py --interval 0.5 --window 60 --csv /tmp/net_data.csv --max-samples 8000
-```
-
-* `--interval`: 聚合周期（秒），默认 1s；调小可加快响应，调大则降低开销。
-* `--window`: 滑动窗口长度（以周期计），用于计算平滑的滚动均值/95 分位 RTT。
-* `--max-samples`: 每周期采样的 RTT 上限，防止高并发下内存过大。
-* 自动输出 **最小/最大/平均/95 分位 RTT** 与重传计数，并增加滚动指标列，方便模型吸收时间趋势。
-
-### 第二步：模型训练 (Model Training)
-
-利用采集到的 `net_data.csv`，训练 Isolation Forest 模型。
-
-```bash
-python3 train_model.py --data net_data.csv --contamination 0.15 --estimators 200
-```
-
-*   **功能**：
-    *   清洗数据并自动过滤缺失特征。
-    *   标准化特征、训练无监督异常检测模型，并做快速留出验证。
-    *   生成可视化散点图 `model_result.png` 与训练摘要 `training_metrics.json`。
-*   **输出**：生成模型文件 `isolation_forest.pkl`（内含 scaler 与模型）。
-
-### 第三步：启动实时监控看板 (Dashboard)
-
-启动 Streamlit 前端页面，加载训练好的模型，对实时网络状态进行推断和展示。
-
-**注意**：为了展示实时效果，建议重新运行 `run_experiment.sh` (让它在后台产生数据)，然后新开一个终端启动 Dashboard。
-
-```bash
-# 启动 Dashboard
-streamlit run dashboard.py
-```
-
-*   **访问地址**：打开浏览器访问 `http://localhost:8501`
-*   **功能演示**：
-    *   观察 RTT 实时折线图。
-    *   当后台注入故障时，观察右上角 AI 状态是否变为 🔴 **异常**。
-
-### 第四步：LLM Token 匀速生成（网络自适应节流）
-
-面向「云端 LLM 生成速率固定、客户端网络波动导致 token 浪费」的问题，新增 `adaptive_token_pacer.py` 作为 **LLM 侧边车**：
-
-1.  **采集网络健康度**：继续运行 `smart_agent.py`（或 `run_experiment.sh`）实时写入 `net_data.csv`。
-2.  **按网络动态节流 token**：在推理侧用 pacer 包裹生成流，将 token 速率限制为链路可承载的速率，避免云端过度生成。
-3.  **云端可查询的 Hint Server**：`--serve <port>` 会启动轻量 HTTP JSON 服务，云端 LLM 只需周期性 `GET /` 获取 `current_tps` 与推荐 `sleep_seconds`，即可在生成循环中自适应休眠，做到「能传多少就生成多少」。
-
-```bash
-# 示例：按词粒度匀速输出文本，RTT 升高或重传激增时自动降速
-python3 adaptive_token_pacer.py "Once upon a time in a network-aware LLM..." \
-  --csv net_data.csv --max-tps 60 --min-tps 5 --mode word
-```
-
-```bash
-# 示例：云端推理循环伪代码（Python）
-# 每 0.5s 查询 Hint Server，按返回的 sleep_seconds 控制 tokenizer 逐 token 发送
-curl http://localhost:9000 | jq
-
-while streaming:
-  hint = requests.get("http://localhost:9000", timeout=0.2).json()
-  next_token = llm.generate_next()
-  send_to_client(next_token)
-  time.sleep(hint["sleep_seconds"])
-```
-
-* 算法思路：将 95 分位 RTT 与重传计数映射为「链路质量系数」，对最大 token/s 做指数滑动平均的调节，并通过 HTTP 暴露实时速率建议。
-* 部署方式：在云端 LLM 服务器的 streaming 线程里调用 pacer（或移植其逻辑/HTTP 查询）来控制生成速率；也可在边缘代理上按 pacer 节奏向客户端回推，确保「能传多少、就生成多少」。
+我们制定了详细的后续开发计划，包括 GPU 监控、真实 vLLM 集成和 PID 控制算法等。
+详情请见 [ROADMAP.md](./ROADMAP.md)。
 
 ---
 
@@ -183,39 +136,8 @@ Dashboard 能够毫秒级捕捉网络波动，并标记异常点。
 *   **零侵入性**：基于 eBPF 技术，无需修改内核源码，无需重启应用，性能开销极低。
 *   **真实指标**：通过 Hook `tcp_rcv_established` 和 `tcp_retransmit_skb`，获取内核协议栈真实的 RTT 和重传事件，比 Ping 更准确。
 *   **增强型特征**：实时输出最小/最大/平均/95 分位 RTT、重传计数以及滚动均值/分位数，既能反映瞬时尖峰，又能平滑趋势。
-*   **智能诊断**：摒弃传统的静态阈值报警，使用 **Isolation Forest** 自动学习网络基线，能够适应不同的网络环境，并将训练摘要写入 `training_metrics.json` 方便复现。
-*   **全栈闭环**：实现了从底层内核采集、故障模拟、模型训练到上层可视化展示的完整工程链路。
-
----
-
-## 🎓 作为课程大作业的呈现要点（Pre 指南）
-
-如果需要在课堂答辩或预习展示中讲解本项目，可以按以下结构准备材料：
-
-### 1. 选题背景与目标
-* **痛点**：传统 ping/iperf 难以提供内核态真实指标，且阈值告警对动态环境不鲁棒。
-* **目标**：低开销采集 TCP RTT/重传 → 无监督检测拥塞/丢包 → 实时可视化与根因提示。
-
-### 2. 系统架构与分层
-* **数据面**：`smart_agent.py` 的 eBPF 探针挂载 `tcp_rcv_established`、`tcp_retransmit_skb`，秒级聚合写入 `net_data.csv`。
-* **故障注入**：`chaos_maker.py` 使用 `tc qdisc` 制造高延迟/丢包，便于展示检测效果。
-* **智能面**：`train_model.py` 训练 Isolation Forest，输出 `isolation_forest.pkl` 与可视化 `model_result.png`。
-* **应用面**：`dashboard.py` 用 Streamlit 展示实时 RTT/重传曲线与异常状态灯。
-
-### 3. Demo 流程脚本（适合课堂演示）
-1. `sudo bash run_experiment.sh` 启动采集 + 流量 + 故障注入，运行 3~5 分钟。
-2. 终端 A 观察 `net_data.csv` 实时累积；终端 B 执行 `python3 train_model.py` 并展示 `model_result.png`。
-3. 重新开启 `run_experiment.sh` 后，在新终端运行 `streamlit run dashboard.py`，现场演示仪表盘切换为 🔴 异常的瞬态效果。
-
-### 4. 评测与亮点总结
-* **指标**：告警准确率（TP/FP）、平均检测时延（秒级）、采样开销（CPU/内存占用）。
-* **对比**：可与 ping RTT 阈值法对比，突出无监督模型对动态基线的适应性。
-* **可扩展性**：同样框架可替换为 PCA/AutoEncoder 等模型，或增加 HTTP/UDP 指标。
-
-### 5. 局限与改进方向（Q&A 预案）
-* 现有模型基于单机单特征（RTT/重传），未覆盖跨机拓扑或业务日志；可引入分布式采集与多模态特征。
-* 随机故障注入较简单，可使用 tc netem 组合更复杂的丢包/抖动分布，或基于 `iperf3` 构建带宽压力场景。
-* 仪表盘为原型界面，可添加告警历史、事件时间轴、导出报告等功能。课堂展示时可以用这些改进点引出讨论。
+*   **智能诊断**：摒弃传统的静态阈值报警，使用 **Isolation Forest** 自动学习网络基线，能够适应不同的网络环境。
+*   **闭环控制**：实现了从“监控”到“控制”的跨越，利用 GBDT 预测实现自适应流控。
 
 ---
 
@@ -227,5 +149,4 @@ Dashboard 能够毫秒级捕捉网络波动，并标记异常点。
 
 ### 👨‍💻 作者
 *   **姓名**：[你的名字]
-*   **学号**：[你的学号]
 *   **专业**：计算机科学与技术
