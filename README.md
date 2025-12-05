@@ -1,20 +1,9 @@
-# 🚀 SmartNetDiag: 基于 eBPF + AI 的智能网络诊断系统
-
-> **Smart Network Diagnostic System powered by eBPF & Isolation Forest**
-
-[![eBPF](https://img.shields.io/badge/Linux-eBPF-orange.svg)](https://ebpf.io/)
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
-[![AI](https://img.shields.io/badge/Model-Isolation%20Forest-green.svg)](https://scikit-learn.org/)
-[![Dashboard](https://img.shields.io/badge/Dashboard-Streamlit-red.svg)](https://streamlit.io/)
-
-SmartNetDiag 是一个轻量级、低开销的实时网络诊断系统。它利用 **eBPF (Extended Berkeley Packet Filter)** 技术在 Linux 内核态零拷贝采集 TCP 关键指标（RTT、重传），并结合 **孤立森林 (Isolation Forest)** 无监督学习算法，实现对网络异常（如拥塞、丢包）的实时检测与根因分析。
-
----
+# 🚀 eBPF-TokenFlow: Network-Aware Token Pacing for Real-Time LLM Streaming
 
 ## 📂 项目目录结构
 
 ```text
-SmartNetDiag/
+eBPF-TokenFlow/
 ├── 📄 run_experiment.sh   # [一键启动] 自动化实验脚本 (采集+流量+故障注入)
 ├── 📄 smart_agent.py      # [数据平面] eBPF 探针，负责内核数据采集与清洗
 ├── 📄 chaos_maker.py      # [测试工具] 基于 tc 的网络故障注入器
@@ -25,6 +14,17 @@ SmartNetDiag/
 ├── 📄 requirements.txt    # Python 依赖库列表
 └── 📄 README.md           # 项目说明文档
 ```
+
+---
+
+> **Smart Network Diagnostic System powered by eBPF & Isolation Forest**
+
+[![eBPF](https://img.shields.io/badge/Linux-eBPF-orange.svg)](https://ebpf.io/)
+[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
+[![AI](https://img.shields.io/badge/Model-Isolation%20Forest-green.svg)](https://scikit-learn.org/)
+[![Dashboard](https://img.shields.io/badge/Dashboard-Streamlit-red.svg)](https://streamlit.io/)
+
+SmartNetDiag 是一个轻量级、低开销的实时网络诊断系统。它利用 **eBPF (Extended Berkeley Packet Filter)** 技术在 Linux 内核态零拷贝采集 TCP 关键指标（RTT、重传），并结合 **孤立森林 (Isolation Forest)** 无监督学习算法，实现对网络异常（如拥塞、丢包）的实时检测与根因分析。
 
 ---
 

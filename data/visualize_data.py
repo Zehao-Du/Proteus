@@ -29,6 +29,5 @@ plt.text(0, df['retrans_count'].max()*0.8, "  Packet Loss/Link Error", fontsize=
 
 plt.tight_layout()
 plt.show()
-# 如果在 WSL2 里没有图形界面，可以保存为图片
 plt.savefig("data_analysis.png")
-print("图表已保存为 data_analysis.png，请在 Windows 文件管理器中查看。")
+print("图表已保存为 data_analysis.png")

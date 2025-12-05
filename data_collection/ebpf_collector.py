@@ -14,15 +14,91 @@ from collections import deque
 from bcc import BPF
 
 
+# BPF_PROGRAM = r"""
+# #include <uapi/linux/ptrace.h>
+# #include <linux/types.h>
+
+# struct bpf_wq {
+#     int dummy;
+# };
+
+# #include <linux/bpf.h>
+# #include <net/sock.h>
+# #include <bcc/proto.h>
+# #include <linux/tcp.h>
+
+# BPF_PERF_OUTPUT(rtt_events);
+# BPF_PERF_OUTPUT(retrans_events);
+
+# struct rtt_data_t {
+#     u32 rtt;
+# };
+
+# struct retrans_data_t {
+#     u32 dummy;
+# };
+
+# int trace_tcp_rcv(struct pt_regs *ctx, struct sock *sk)
+# {
+#     struct tcp_sock *ts = (struct tcp_sock *)sk;
+#     u32 srtt = ts->srtt_us >> 3;
+
+#     if (srtt == 0) return 0;
+
+#     struct rtt_data_t data = {};
+#     data.rtt = srtt;
+#     rtt_events.perf_submit(ctx, &data, sizeof(data));
+#     return 0;
+# }
+
+# int trace_retransmit(struct pt_regs *ctx, struct sock *sk)
+# {
+#     struct retrans_data_t data = {};
+#     retrans_events.perf_submit(ctx, &data, sizeof(data));
+#     return 0;
+# }
+# """
+
+
 BPF_PROGRAM = r"""
 #include <uapi/linux/ptrace.h>
 #include <linux/types.h>
 
-struct bpf_wq {
-    int dummy;
+// ============================================================
+// 🩹 HOTFIX: Stub definitions for newer kernel headers
+// 这些是为了解决 BCC 在新内核上编译报错的问题
+// ============================================================
+
+// 1. 定义缺失的结构体 (防止 sizeof 报错)
+struct bpf_timer { u64 :64; u64 :64; };
+struct bpf_list_head { void *x; };
+struct bpf_list_node { void *x; };
+struct bpf_rb_root { void *x; };
+struct bpf_rb_node { void *x; };
+struct bpf_refcount { int x; };
+struct bpf_wq { int x; };
+
+// 2. 定义缺失的 Enum
+enum bpf_cgroup_iter_order {
+    BPF_CGROUP_ITER_ORDER_UNSPEC = 0,
+    BPF_CGROUP_ITER_SELF_ONLY,
+    BPF_CGROUP_ITER_DESCENDANTS_PRE,
+    BPF_CGROUP_ITER_DESCENDANTS_POST,
+    BPF_CGROUP_ITER_ANCESTORS_UP,
 };
 
-#include <linux/bpf.h>
+// 3. 定义缺失的宏
+#ifndef BPF_PSEUDO_FUNC
+#define BPF_PSEUDO_FUNC 4
+#endif
+
+// ============================================================
+// END HOTFIX
+// ============================================================
+
+// ❌ 移除 #include <linux/bpf.h> 以减少冲突
+// #include <linux/bpf.h> 
+
 #include <net/sock.h>
 #include <bcc/proto.h>
 #include <linux/tcp.h>
