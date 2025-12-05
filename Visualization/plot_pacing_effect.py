@@ -7,8 +7,8 @@ import math
 
 # 加载模型
 try:
-    iso_bundle = joblib.load("isolation_forest.pkl")
-    gbdt_bundle = joblib.load("gbdt_model.pkl")
+    iso_bundle = joblib.load("../agent/isolation_forest.pkl")
+    gbdt_bundle = joblib.load("../agent/gbdt_model.pkl")
     scaler = iso_bundle['scaler']
     iso = iso_bundle['model']
     gbdt = gbdt_bundle['model']
@@ -17,7 +17,7 @@ except Exception as e:
     exit(1)
 
 # 读取数据
-df = pd.read_csv("net_data.csv")
+df = pd.read_csv("../data/net_data.csv")
 
 # 确保有必要的列
 feature_cols = ['avg_rtt_us', 'p95_rtt_us', 'retrans_count', 'rolling_avg_rtt_us', 'rolling_p95_rtt_us']

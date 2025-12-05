@@ -5,27 +5,37 @@ import time
 import sys
 import os
 import joblib
+import argparse
 from flask import Flask, jsonify
 
 app = Flask(__name__)
 
-# Models
-ISO_MODEL_PATH = "isolation_forest.pkl"
-GBDT_MODEL_PATH = "gbdt_model.pkl"
-DATA_PATH = "net_data.csv"
+# Global variables placeholder
+predictor = None
+ARGS = None  # To store parsed arguments
 
 class HealthPredictor:
-    def __init__(self):
+    def __init__(self, iso_path, gbdt_path):
+        self.iso_path = iso_path
+        self.gbdt_path = gbdt_path
         self.iso_bundle = None
         self.gbdt_bundle = None
         self.load_models()
 
     def load_models(self):
         try:
-            if os.path.exists(ISO_MODEL_PATH):
-                self.iso_bundle = joblib.load(ISO_MODEL_PATH)
-            if os.path.exists(GBDT_MODEL_PATH):
-                self.gbdt_bundle = joblib.load(GBDT_MODEL_PATH)
+            if os.path.exists(self.iso_path):
+                self.iso_bundle = joblib.load(self.iso_path)
+                print(f"✅ Loaded Isolation Forest from {self.iso_path}")
+            else:
+                print(f"⚠️ Model not found: {self.iso_path}")
+
+            if os.path.exists(self.gbdt_path):
+                self.gbdt_bundle = joblib.load(self.gbdt_path)
+                print(f"✅ Loaded GBDT from {self.gbdt_path}")
+            else:
+                print(f"⚠️ Model not found: {self.gbdt_path}")
+                
         except Exception as e:
             print(f"⚠️ Error loading models: {e}")
 
@@ -59,8 +69,6 @@ class HealthPredictor:
         health = rtt_factor - penalty
         return max(0.01, min(1.0, health))
 
-predictor = HealthPredictor()
-
 def s_curve(x, k=5):
     return 1 / (1 + math.exp(-k * (x - 0.5)))
 
@@ -72,14 +80,17 @@ def pace_from_health(h):
 
 @app.route("/hint", methods=["GET"])
 def get_hint():
+    global predictor, ARGS
     try:
-        # Reload models periodically or just once? Kept simple here.
-        # predictor.load_models() 
-        
-        # Read latest data
-        # We need the last row to have all features including rolling ones
+        if predictor is None:
+             return jsonify({"error": "Server initializing"}), 503
+
+        # Read latest data from the configured path
         # smart_agent.py writes rolling features, so we can just take the last row
-        df = pd.read_csv(DATA_PATH).tail(5)
+        if not os.path.exists(ARGS.data_path):
+             return jsonify({"health": 1.0, "token_rate": 50.0, "status": "waiting_for_data"})
+
+        df = pd.read_csv(ARGS.data_path).tail(5)
         if df.empty:
             return jsonify({"health": 1.0, "token_rate": 50.0, "status": "no_data"})
             
@@ -102,7 +113,24 @@ def get_hint():
     except Exception as e:
         return jsonify({"health": 0.5, "token_rate": 10.0, "error": str(e)})
 
-if __name__ == "__main__":
-    print("🚀 Starting Hint Server on port 5000...")
-    app.run(host="0.0.0.0", port=5000)
+def parse_args():
+    parser = argparse.ArgumentParser(description="AI Hint Server")
+    parser.add_argument("--iso-model", type=str, default="isolation_forest.pkl", help="Path to Isolation Forest model")
+    parser.add_argument("--gbdt-model", type=str, default="gbdt_model.pkl", help="Path to GBDT model")
+    parser.add_argument("--data-path", type=str, default="net_data.csv", help="Path to network data CSV")
+    parser.add_argument("--port", type=int, default=5000, help="Server port")
+    return parser.parse_args()
 
+if __name__ == "__main__":
+    ARGS = parse_args()
+    
+    print(f"🔧 Configuration:")
+    print(f"   ISO Model:  {ARGS.iso_model}")
+    print(f"   GBDT Model: {ARGS.gbdt_model}")
+    print(f"   Data Path:  {ARGS.data_path}")
+
+    # Initialize predictor with parsed paths
+    predictor = HealthPredictor(ARGS.iso_model, ARGS.gbdt_model)
+
+    print(f"🚀 Starting Hint Server on port {ARGS.port}...")
+    app.run(host="0.0.0.0", port=ARGS.port)

@@ -3,8 +3,8 @@
 
 set -e
 
-REPO_DIR="/home/v-boxiuli/Smart-Network-Diagnostic-System-powered-by-eBPF"
-cd "$REPO_DIR"
+# REPO_DIR="/home/v-boxiuli/Smart-Network-Diagnostic-System-powered-by-eBPF"
+# cd "$REPO_DIR"
 
 echo "📋 检查当前状态..."
 git status

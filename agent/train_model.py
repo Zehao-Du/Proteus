@@ -7,8 +7,7 @@ from sklearn.preprocessing import StandardScaler
 import os
 import argparse
 
-def train():
-    data_path = "net_data.csv"
+def train(data_path):
     if not os.path.exists(data_path):
         print(f"❌ Data file {data_path} not found. Run smart_agent.py first.")
         return
@@ -57,5 +56,15 @@ def train():
     joblib.dump(gbdt_bundle, "gbdt_model.pkl")
     print("✅ Saved gbdt_model.pkl (for Pacer)")
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--data_path",
+        type=str,
+        default="../data/net_data.csv",
+    )
+    return parser.parse_args()
+
 if __name__ == "__main__":
-    train()
+    args = parse_args()
+    train(args.data_path)

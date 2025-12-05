@@ -1,38 +1,34 @@
-# 🚀 TokenFlow: 网络感知的 LLM 智能流控系统
-
-> **Network-Aware LLM Token Pacing System powered by eBPF & AI**
-
-[![eBPF](https://img.shields.io/badge/Linux-eBPF-orange.svg)](https://ebpf.io/)
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
-[![AI](https://img.shields.io/badge/Model-Isolation%20Forest-green.svg)](https://scikit-learn.org/)
-[![Dashboard](https://img.shields.io/badge/Dashboard-Streamlit-red.svg)](https://streamlit.io/)
-
-TokenFlow (原 SmartNetDiag) 是一个轻量级、低开销的实时网络诊断与流控系统。它利用 **eBPF (Extended Berkeley Packet Filter)** 技术在 Linux 内核态零拷贝采集 TCP 关键指标（RTT、重传），并结合 **孤立森林 (Isolation Forest)** 和 **GBDT** 算法，实现对网络健康度的实时感知。
-
-更进一步，本项目探索了 **网络感知的 LLM 流控 (Network-Aware Token Pacing)**，利用实时网络健康度预测，动态调节大模型 Token 生成速率，实现“自适应流控”，在网络拥塞时自动降速以避免丢包，在网络通畅时全速生成。
-
----
+# 🚀 eBPF-TokenFlow: Network-Aware Token Pacing for Real-Time LLM Streaming
 
 ## 📂 项目目录结构
 
 ```text
-SmartNetDiag/
-├── 📄 run_experiment.sh   # [一键启动] 完整系统编排 (采集+流量+训练+流控+模拟)
-├── 📄 smart_agent.py      # [数据面] eBPF 探针，采集内核 TCP RTT/重传
-├── 📄 train_model.py      # [智能面] 训练 Isolation Forest (异常检测) + GBDT (RTT预测)
-├── 📄 hint_server.py      # [控制面] HTTP 服务，提供 Token Pacing 速率建议 (新增)
-├── 📄 llm_simulator.py    # [应用面] 模拟 LLM Token 生成，演示自适应流控 (新增)
-├── 📄 dashboard.py        # [可视化] Streamlit 实时监控看板
-├── 📄 plot_pacing_effect.py # [可视化] 绘制 Pacing 效果对比图
-├── 📄 chaos_maker.py      # [测试] 网络故障注入工具
-├── 📄 ROADMAP.md          # [规划] 项目后续开发路线图与分工
+eBPF-TokenFlow/
+├── 📄 run_experiment.sh   # [一键启动] 自动化实验脚本 (采集+流量+故障注入)
+├── 📄 smart_agent.py      # [数据平面] eBPF 探针，负责内核数据采集与清洗
+├── 📄 chaos_maker.py      # [测试工具] 基于 tc 的网络故障注入器
+├── 📄 train_model.py      # [智能平面] 读取 CSV 数据，训练模型并评估
+├── 📄 dashboard.py        # [应用平面] Streamlit 实时监控仪表盘
+├── 📄 adaptive_token_pacer.py  # [LLM 侧边车] 按网络状态自适应节流 LLM token 速率
+├── 📄 visualize_data.py   # [分析工具] 简单的数据分布可视化脚本
 ├── 📄 requirements.txt    # Python 依赖库列表
 └── 📄 README.md           # 项目说明文档
 ```
 
 ---
 
-## 🚀 快速开始 (Quick Start)
+> **Smart Network Diagnostic System powered by eBPF & Isolation Forest**
+
+[![eBPF](https://img.shields.io/badge/Linux-eBPF-orange.svg)](https://ebpf.io/)
+[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
+[![AI](https://img.shields.io/badge/Model-Isolation%20Forest-green.svg)](https://scikit-learn.org/)
+[![Dashboard](https://img.shields.io/badge/Dashboard-Streamlit-red.svg)](https://streamlit.io/)
+
+SmartNetDiag 是一个轻量级、低开销的实时网络诊断系统。它利用 **eBPF (Extended Berkeley Packet Filter)** 技术在 Linux 内核态零拷贝采集 TCP 关键指标（RTT、重传），并结合 **孤立森林 (Isolation Forest)** 无监督学习算法，实现对网络异常（如拥塞、丢包）的实时检测与根因分析。
+
+---
+
+## 🛠️ 环境搭建 (Installation)
 
 ### 1. 完整演示 (End-to-End Demo)
 
