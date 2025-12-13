@@ -3,8 +3,11 @@ import streamlit as st
 import pandas as pd
 import joblib
 import time
-import matplotlib.pyplot as plt
-import altair as alt # Streamlit 自带的高性能绘图库
+import requests
+import altair as alt
+from collections import deque
+from datetime import datetime
+import os
 
 # ==========================================
 # 1. 配置页面
@@ -16,7 +19,6 @@ st.set_page_config(
 )
 
 st.title("🚀 基于 eBPF + AI 的智能网络诊断系统")
-st.markdown("### Smart Network Diagnostic System powered by eBPF & Isolation Forest")
 
 # ==========================================
 # 2. 加载 AI 模型
@@ -24,119 +26,150 @@ st.markdown("### Smart Network Diagnostic System powered by eBPF & Isolation For
 @st.cache_resource
 def load_model_bundle():
     try:
-        # train_model.py 保存的是一个字典: {"model": model, "scaler": scaler}
-        return joblib.load("isolation_forest.pkl")
+        if os.path.exists("../agent/isolation_forest.pkl"):
+            return joblib.load("../agent/isolation_forest.pkl")
+        return None
     except:
-        st.error("未找到模型文件！请先运行 train_model.py")
         return None
 
 bundle = load_model_bundle()
 model = bundle["model"] if bundle else None
 scaler = bundle["scaler"] if bundle else None
 
+if model is None:
+    st.warning("⚠️ 未检测到 'isolation_forest.pkl' 模型文件，AI 诊断功能已禁用 (仅显示原始数据)。")
+
 # ==========================================
-# 3. 实时读取数据函数
+# 3. 数据读取函数
 # ==========================================
 def get_recent_data(window_size=60):
     try:
-        # 只读取最后 window_size 行，避免文件太大卡顿
-        df = pd.read_csv("net_data.csv")
+        # 兼容两种路径：当前目录 或 ../data/ 目录
+        if os.path.exists("net_data.csv"):
+            df = pd.read_csv("net_data.csv")
+        elif os.path.exists("../data/net_data.csv"):
+            df = pd.read_csv("../data/net_data.csv")
+        else:
+            return pd.DataFrame()
         return df.tail(window_size)
     except:
         return pd.DataFrame()
 
+def get_current_token_rate():
+    try:
+        resp = requests.get("http://localhost:5000/hint", timeout=0.2)
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get("token_rate", 0.0), data.get("health", 0.0)
+    except:
+        pass
+    return 0.0, 0.0
+
 # ==========================================
-# 4. 页面布局与实时刷新逻辑
+# 4. 主循环
 # ==========================================
 
-# 创建占位符容器
 metric_container = st.empty()
 chart_container = st.empty()
 alert_container = st.empty()
 
-while True:
-    df = get_recent_data(100) # 获取最近100秒数据
-    
-    if not df.empty and model is not None:
-        # --- 数据预处理 ---
-        # 注意：这里需要和训练时使用的特征顺序完全一致
-        features = df[['avg_rtt_us', 'p95_rtt_us', 'retrans_count', 'rolling_avg_rtt_us', 'rolling_p95_rtt_us']]
-        
-        # 必须使用训练时的 scaler 进行同样的归一化，否则模型无法识别
-        if scaler:
-            features_scaled = scaler.transform(features)
-        else:
-            features_scaled = features
-        
-        # --- AI 推理 ---
-        # 1为正常，-1为异常
-        predictions = model.predict(features_scaled)
-        df['anomaly'] = predictions
-        
-        # 获取最新的一条数据
-        latest = df.iloc[-1]
-        latest_rtt = latest['avg_rtt_us']
-        latest_retrans = latest['retrans_count']
-        is_anomaly = latest['anomaly'] == -1
-        
-        # --- (A) 顶部指标栏 (Metrics) ---
-        with metric_container.container():
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric(label="实时延迟 (RTT)", value=f"{latest_rtt} us", delta=None)
-            with col2:
-                st.metric(label="重传次数 (Retrans)", value=f"{latest_retrans}", delta=None)
-            with col3:
-                if is_anomaly:
-                    st.error("🔴 AI 诊断: 异常")
-                else:
-                    st.success("🟢 AI 诊断: 健康")
+rate_history = deque(maxlen=60)
 
-        # --- (B) 报警分析 ---
+while True:
+    df = get_recent_data(100)
+    current_rate, current_health = get_current_token_rate()
+    
+    now_str = datetime.now().strftime("%H:%M:%S")
+    rate_history.append({"timestamp": now_str, "token_rate": current_rate})
+    df_rate = pd.DataFrame(rate_history)
+
+    if not df.empty or not df_rate.empty:
+        
+        latest_rtt = 0
+        latest_retrans = 0
+        is_anomaly = False
+        
+        # --- 数据处理 ---
+        if not df.empty:
+            # 1. 初始化 anomaly 列，防止 crash
+            df['anomaly'] = 1 
+            
+            # 2. 如果有模型，则覆盖进行预测
+            if model is not None:
+                try:
+                    features = df[['avg_rtt_us', 'p95_rtt_us', 'retrans_count', 'rolling_avg_rtt_us', 'rolling_p95_rtt_us']]
+                    if scaler:
+                        features_scaled = scaler.transform(features)
+                    else:
+                        features_scaled = features
+                    df['anomaly'] = model.predict(features_scaled)
+                except Exception as e:
+                    # 如果特征列对不上，保持默认值 1
+                    pass
+
+            latest = df.iloc[-1]
+            latest_rtt = latest['avg_rtt_us']
+            latest_retrans = latest['retrans_count']
+            is_anomaly = latest['anomaly'] == -1
+
+        # --- (A) Metrics ---
+        with metric_container.container():
+            col1, col2, col3, col4 = st.columns(4)
+            with col1: st.metric("实时延迟 (RTT)", f"{latest_rtt} us")
+            with col2: st.metric("重传次数", f"{latest_retrans}")
+            with col3: st.metric("LLM 生成速率", f"{current_rate} tps")
+            with col4: 
+                if is_anomaly: st.error("🔴 AI: 异常")
+                else: st.success("🟢 AI: 健康")
+
+        # --- (B) Alerts ---
         with alert_container.container():
             if is_anomaly:
-                reason = []
-                if latest_rtt > 20000: # 这里的阈值可以根据你的图调整
-                    reason.append("链路拥塞 (High Latency)")
-                if latest_retrans > 0:
-                    reason.append("丢包丢帧 (Packet Loss)")
-                
-                error_msg = " | ".join(reason) if reason else "未知异常模式"
-                st.warning(f"🚨 检测到网络故障! 根因分析: {error_msg}")
+                st.warning(f"🚨 网络拥塞检测到！速率已限制为 {current_rate} tps")
 
-        # --- (C) 可视化图表 ---
+        # --- (C) Charts ---
         with chart_container.container():
-            # 颜色映射：正常点用绿，异常点用红
-            chart_data = df.copy()
-            chart_data['color'] = chart_data['anomaly'].apply(lambda x: 'red' if x == -1 else '#00AA00')
-            
-            # 使用 Altair 画一个动态折线图
-            # 左图：RTT 趋势
-            chart_rtt = alt.Chart(chart_data).mark_line().encode(
-                x=alt.X('timestamp', axis=alt.Axis(title='Time')),
-                y=alt.Y('avg_rtt_us', axis=alt.Axis(title='RTT (us)')),
-                color=alt.value("#3366cc")
-            ).properties(title="RTT 实时趋势 (最近100秒)")
-            
-            # 叠加异常点
-            points = alt.Chart(chart_data[chart_data['anomaly']==-1]).mark_circle(size=60).encode(
-                x='timestamp',
-                y='avg_rtt_us',
-                color=alt.value('red'),
-                tooltip=['avg_rtt_us', 'retrans_count']
-            )
+            # 图1: RTT
+            if not df.empty:
+                chart_data = df.copy()
+                base = alt.Chart(chart_data).encode(x=alt.X('timestamp', axis=alt.Axis(labels=False)))
+                
+                line = base.mark_line().encode(y='avg_rtt_us', color=alt.value("#3366cc"))
+                
+                # 安全地绘制异常点 (确保列存在)
+                points = base.mark_circle(size=60, color='red').encode(
+                    y='avg_rtt_us', 
+                    tooltip=['avg_rtt_us']
+                ).transform_filter(
+                    alt.datum.anomaly == -1
+                )
+                
+                st.altair_chart(line + points, use_container_width=True)
 
-            st.altair_chart(chart_rtt + points, use_container_width=True)
+            # 图2: Rate
+            if not df_rate.empty:
+                chart_rate = alt.Chart(df_rate).mark_area(
+                    line={'color':'purple'},
+                    color=alt.Gradient(
+                        gradient='linear',
+                        stops=[alt.GradientStop(color='purple', offset=0), alt.GradientStop(color='white', offset=1)],
+                        x1=1, x2=1, y1=1, y2=0
+                    )
+                ).encode(
+                    x=alt.X('timestamp'),
+                    y=alt.Y('token_rate', scale=alt.Scale(domain=[0, 110]))
+                ).properties(height=200)
+                st.altair_chart(chart_rate, use_container_width=True)
 
-            # 下图：重传柱状图
-            chart_loss = alt.Chart(chart_data).mark_bar().encode(
-                x='timestamp',
-                y='retrans_count',
-                color=alt.value('orange')
-            ).properties(title="重传事件计数")
-            
-            st.altair_chart(chart_loss, use_container_width=True)
+            # --- 图表 3: 重传计数  ---
+            if not chart_data.empty:
+                chart_loss = alt.Chart(chart_data).mark_bar().encode(
+                    x=alt.X('timestamp', axis=alt.Axis(title='Time')), # 最后一个图显示时间轴标签
+                    y=alt.Y('retrans_count', axis=alt.Axis(title='Retrans Count')),
+                    color=alt.value('orange'),
+                    tooltip=['timestamp', 'retrans_count']
+                ).properties(title="网络重传事件计数 (Packet Loss)", height=150)
+                
+                st.altair_chart(chart_loss, use_container_width=True)
 
-    # 刷新间隔 1 秒
     time.sleep(1)
