@@ -56,4 +56,3 @@ extern __noendbr void ibt_restore(u64 save);
 arch/x86/include/asm/ibt.h:20:34: note: expanded from macro '__noendbr'
 #define __noendbr       __attribute__((nocf_check))
                                        ^
-5 warnings generated.

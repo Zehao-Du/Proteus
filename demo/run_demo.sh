@@ -21,10 +21,10 @@ SERVER_PORT=5000
 # END CONFIGURATION
 # ==========================================
 
-if [ "$EUID" -ne 0 ]; then
-  echo "❌ Please run with sudo (Server needs permissions)"
-  exit 1
-fi
+# if [ "$EUID" -ne 0 ]; then
+#   echo "❌ Please run with sudo (Server needs permissions)"
+#   exit 1
+# fi
 
 # Ensure we are in the script's directory
 cd "$(dirname "$0")" || exit
