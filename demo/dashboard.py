@@ -168,7 +168,7 @@ while True:
                     y=alt.Y('retrans_count', axis=alt.Axis(title='Retrans Count')),
                     color=alt.value('orange'),
                     tooltip=['timestamp', 'retrans_count']
-                ).properties(title="网络重传事件计数 (Packet Loss)", height=150)
+                ).properties(title="网络重传事件计数 (Packet Loss)", height=300)
                 
                 st.altair_chart(chart_loss, use_container_width=True)
 
