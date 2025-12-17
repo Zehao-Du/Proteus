@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Smart Agent: eBPF-based TCP RTT & retransmission monitor with richer metrics.
+"""Smart Agent v2: Enhanced TCP Monitor for RTT Prediction.
 
-- Collects RTT samples and retransmission events via BCC eBPF probes.
-- Aggregates metrics per interval and maintains a rolling window for smoother trends.
-- Writes extended metrics to CSV for model training or live visualization.
+Changes from v1:
+1. Collects Throughput (Bytes/sec) and CWND (Congestion Window).
+2. Generates supervised learning labels (Next_RTT) via 1-step buffering.
 """
 import argparse
 import csv
@@ -13,63 +13,15 @@ from collections import deque
 
 from bcc import BPF
 
-
-# BPF_PROGRAM = r"""
-# #include <uapi/linux/ptrace.h>
-# #include <linux/types.h>
-
-# struct bpf_wq {
-#     int dummy;
-# };
-
-# #include <linux/bpf.h>
-# #include <net/sock.h>
-# #include <bcc/proto.h>
-# #include <linux/tcp.h>
-
-# BPF_PERF_OUTPUT(rtt_events);
-# BPF_PERF_OUTPUT(retrans_events);
-
-# struct rtt_data_t {
-#     u32 rtt;
-# };
-
-# struct retrans_data_t {
-#     u32 dummy;
-# };
-
-# int trace_tcp_rcv(struct pt_regs *ctx, struct sock *sk)
-# {
-#     struct tcp_sock *ts = (struct tcp_sock *)sk;
-#     u32 srtt = ts->srtt_us >> 3;
-
-#     if (srtt == 0) return 0;
-
-#     struct rtt_data_t data = {};
-#     data.rtt = srtt;
-#     rtt_events.perf_submit(ctx, &data, sizeof(data));
-#     return 0;
-# }
-
-# int trace_retransmit(struct pt_regs *ctx, struct sock *sk)
-# {
-#     struct retrans_data_t data = {};
-#     retrans_events.perf_submit(ctx, &data, sizeof(data));
-#     return 0;
-# }
-# """
-
+# ============================================================
+# eBPF Kernel Program
+# ============================================================
 
 BPF_PROGRAM = r"""
 #include <uapi/linux/ptrace.h>
 #include <linux/types.h>
 
-// ============================================================
-// 🩹 HOTFIX: Stub definitions for newer kernel headers
-// 这些是为了解决 BCC 在新内核上编译报错的问题
-// ============================================================
-
-// 1. 定义缺失的结构体 (防止 sizeof 报错)
+// Fix for missing definitions in some kernels
 struct bpf_timer { u64 :64; u64 :64; };
 struct bpf_list_head { void *x; };
 struct bpf_list_node { void *x; };
@@ -78,43 +30,31 @@ struct bpf_rb_node { void *x; };
 struct bpf_refcount { int x; };
 struct bpf_wq { int x; };
 
-// 2. 定义缺失的 Enum
-enum bpf_cgroup_iter_order {
-    BPF_CGROUP_ITER_ORDER_UNSPEC = 0,
-    BPF_CGROUP_ITER_SELF_ONLY,
-    BPF_CGROUP_ITER_DESCENDANTS_PRE,
-    BPF_CGROUP_ITER_DESCENDANTS_POST,
-    BPF_CGROUP_ITER_ANCESTORS_UP,
-};
-
-// 3. 定义缺失的宏
 #ifndef BPF_PSEUDO_FUNC
 #define BPF_PSEUDO_FUNC 4
 #endif
 
-// ============================================================
-// END HOTFIX
-// ============================================================
-
-// ❌ 移除 #include <linux/bpf.h> 以减少冲突
-// #include <linux/bpf.h> 
-
 #include <net/sock.h>
 #include <bcc/proto.h>
 #include <linux/tcp.h>
+#include <linux/skbuff.h> // Needed for skb->len
 
 BPF_PERF_OUTPUT(rtt_events);
 BPF_PERF_OUTPUT(retrans_events);
 
 struct rtt_data_t {
     u32 rtt;
+    u32 cwnd;
+    u32 len;
 };
 
 struct retrans_data_t {
     u32 dummy;
 };
 
-int trace_tcp_rcv(struct pt_regs *ctx, struct sock *sk)
+// trace_tcp_rcv: Called when a valid TCP packet is received
+// We add 'struct sk_buff *skb' to arguments to get packet length
+int trace_tcp_rcv(struct pt_regs *ctx, struct sock *sk, struct sk_buff *skb)
 {
     struct tcp_sock *ts = (struct tcp_sock *)sk;
     u32 srtt = ts->srtt_us >> 3;
@@ -123,6 +63,15 @@ int trace_tcp_rcv(struct pt_regs *ctx, struct sock *sk)
 
     struct rtt_data_t data = {};
     data.rtt = srtt;
+    data.cwnd = ts->snd_cwnd; // Congestion Window
+    
+    // Safety check for skb access
+    if (skb) {
+        data.len = skb->len;  // Packet length in bytes
+    } else {
+        data.len = 0;
+    }
+
     rtt_events.perf_submit(ctx, &data, sizeof(data));
     return 0;
 }
@@ -135,7 +84,6 @@ int trace_retransmit(struct pt_regs *ctx, struct sock *sk)
 }
 """
 
-
 class SmartAgent:
     def __init__(self, interval: float, window: int, csv_path: str, max_samples: int):
         self.interval = interval
@@ -143,46 +91,69 @@ class SmartAgent:
         self.csv_path = csv_path
         self.max_samples = max_samples
 
+        print("Compiling eBPF program...")
         self.bpf = BPF(text=BPF_PROGRAM)
+        # Attach to kprobe
         self.bpf.attach_kprobe(event="tcp_rcv_established", fn_name="trace_tcp_rcv")
         self.bpf.attach_kprobe(event="tcp_retransmit_skb", fn_name="trace_retransmit")
 
+        # Runtime buffers
         self.rtt_samples = []
+        self.cwnd_samples = []
+        self.total_bytes = 0
         self.retrans_count = 0
+        
+        # Rolling window for trend features
         self.window_buffer = deque(maxlen=self.window)
+        
+        # Buffer for Label Generation (Next RTT)
+        self.last_interval_metrics = None
 
         self.bpf["rtt_events"].open_perf_buffer(self._handle_rtt)
         self.bpf["retrans_events"].open_perf_buffer(self._handle_retrans)
 
-    # eBPF callbacks
+    # -------------------------
+    # eBPF Callbacks
+    # -------------------------
     def _handle_rtt(self, cpu, data, size):
         event = self.bpf["rtt_events"].event(data)
         if len(self.rtt_samples) < self.max_samples:
             self.rtt_samples.append(event.rtt)
+            self.cwnd_samples.append(event.cwnd)
+        
+        # Accumulate throughput regardless of sample cap
+        self.total_bytes += event.len
 
     def _handle_retrans(self, cpu, data, size):
         self.retrans_count += 1
 
-    # Metrics helpers
+    # -------------------------
+    # Helpers
+    # -------------------------
     def _percentile(self, values, pct):
-        if not values:
-            return 0
+        if not values: return 0
         k = (len(values) - 1) * pct
         f = int(k)
         c = min(f + 1, len(values) - 1)
-        if f == c:
-            return values[f]
         return values[f] + (values[c] - values[f]) * (k - f)
 
     def _aggregate_metrics(self):
+        """Calculates stats for the current interval."""
+        # 1. RTT Stats
         if not self.rtt_samples:
             avg_rtt = p95_rtt = min_rtt = max_rtt = 0
+            avg_cwnd = 0
         else:
             sorted_rtt = sorted(self.rtt_samples)
             avg_rtt = int(statistics.fmean(sorted_rtt))
             p95_rtt = int(self._percentile(sorted_rtt, 0.95))
             min_rtt = sorted_rtt[0]
             max_rtt = sorted_rtt[-1]
+            avg_cwnd = int(statistics.fmean(self.cwnd_samples))
+
+        # 2. Throughput (Bytes per second)
+        # Note: self.interval is the polling time
+        throughput = int(self.total_bytes / self.interval)
 
         metrics = {
             "timestamp": int(time.time()),
@@ -190,65 +161,81 @@ class SmartAgent:
             "p95_rtt_us": p95_rtt,
             "min_rtt_us": min_rtt,
             "max_rtt_us": max_rtt,
+            "avg_cwnd": avg_cwnd,
+            "throughput_bps": throughput, # New Feature
             "retrans_count": self.retrans_count,
             "rtt_samples": len(self.rtt_samples),
         }
 
-        # update rolling window
+        # 3. Rolling Window Features
         self.window_buffer.append(metrics)
         if self.window_buffer:
-            rolling_avg = statistics.fmean(m["avg_rtt_us"] for m in self.window_buffer)
-            rolling_p95 = statistics.fmean(m["p95_rtt_us"] for m in self.window_buffer)
+            metrics["rolling_avg_rtt"] = int(statistics.fmean(m["avg_rtt_us"] for m in self.window_buffer))
+            metrics["rolling_p95_rtt"] = int(statistics.fmean(m["p95_rtt_us"] for m in self.window_buffer))
+            metrics["rolling_std_rtt"] = int(statistics.stdev([m["avg_rtt_us"] for m in self.window_buffer]) if len(self.window_buffer) > 1 else 0)
         else:
-            rolling_avg = rolling_p95 = 0
+            metrics["rolling_avg_rtt"] = 0
+            metrics["rolling_p95_rtt"] = 0
+            metrics["rolling_std_rtt"] = 0
 
-        metrics.update({
-            "rolling_avg_rtt_us": int(rolling_avg),
-            "rolling_p95_rtt_us": int(rolling_p95),
-        })
         return metrics
 
     def _reset_counters(self):
         self.rtt_samples = []
+        self.cwnd_samples = []
+        self.total_bytes = 0
         self.retrans_count = 0
 
     def run(self):
-        print("Initializing Smart Agent (eBPF collector with enhanced metrics)...")
-        print("Press Ctrl+C to stop. Writing to", self.csv_path)
+        print(f"Smart Agent Running. Interval={self.interval}s. Writing to {self.csv_path}")
         self._prepare_csv()
+        
         try:
             while True:
                 self._poll_events()
-                metrics = self._aggregate_metrics()
-                self._write_row(metrics)
-                self._print_row(metrics)
+                
+                # Get current stats (Features for time T)
+                current_metrics = self._aggregate_metrics()
+                
+                # Logic: We write the ROW for time (T-1) now, 
+                # using time (T)'s RTT as the TARGET Label.
+                if self.last_interval_metrics is not None:
+                    # Feature: State at T-1
+                    # Label: RTT at T
+                    target_next_rtt = current_metrics["avg_rtt_us"]
+                    self._write_row(self.last_interval_metrics, target_next_rtt)
+                    self._print_row(self.last_interval_metrics, target_next_rtt)
+                
+                # Store T to be written when T+1 arrives
+                self.last_interval_metrics = current_metrics
+                
                 self._reset_counters()
+                
         except KeyboardInterrupt:
-            print("\nStopping collector.")
+            print("\nStopping collector...")
+            # Note: The very last interval captured is lost here because 
+            # we don't have a "next" interval to label it. This is acceptable.
 
     def _poll_events(self):
         start = time.time()
+        # Ensure we poll for exactly 'interval' seconds
         while time.time() - start < self.interval:
-            timeout_ms = int(max((self.interval - (time.time() - start)) * 1000, 1))
-            self.bpf.perf_buffer_poll(timeout=timeout_ms)
+            self.bpf.perf_buffer_poll(timeout=100)
 
     def _prepare_csv(self):
         with open(self.csv_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
                 "timestamp",
-                "avg_rtt_us",
-                "p95_rtt_us",
-                "min_rtt_us",
-                "max_rtt_us",
-                "retrans_count",
-                "rtt_samples",
-                "rolling_avg_rtt_us",
-                "rolling_p95_rtt_us",
-                "label",
+                # --- Features ---
+                "avg_rtt_us", "p95_rtt_us", "min_rtt_us", "max_rtt_us",
+                "avg_cwnd", "throughput_bps", "retrans_count",
+                "rolling_avg_rtt", "rolling_p95_rtt", "rolling_std_rtt",
+                # --- Labels ---
+                "target_next_avg_rtt"
             ])
 
-    def _write_row(self, metrics):
+    def _write_row(self, metrics, target):
         with open(self.csv_path, "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
@@ -257,45 +244,33 @@ class SmartAgent:
                 metrics["p95_rtt_us"],
                 metrics["min_rtt_us"],
                 metrics["max_rtt_us"],
+                metrics["avg_cwnd"],
+                metrics["throughput_bps"],
                 metrics["retrans_count"],
-                metrics["rtt_samples"],
-                metrics["rolling_avg_rtt_us"],
-                metrics["rolling_p95_rtt_us"],
-                0,
+                metrics["rolling_avg_rtt"],
+                metrics["rolling_p95_rtt"],
+                metrics["rolling_std_rtt"],
+                target # The Label
             ])
 
-    def _print_row(self, metrics):
+    def _print_row(self, m, target):
         print(
-            f"{metrics['timestamp']:<15} | avg {metrics['avg_rtt_us']:<8}us | "
-            f"p95 {metrics['p95_rtt_us']:<8}us | retrans {metrics['retrans_count']:<5} | "
-            f"samples {metrics['rtt_samples']:<5} | roll_avg {metrics['rolling_avg_rtt_us']}us"
+            f"[{m['timestamp']}] "
+            f"RTT: {m['avg_rtt_us']:<5} | "
+            f"CWND: {m['avg_cwnd']:<4} | "
+            f"Tput: {m['throughput_bps']/1024:.1f} KB/s | "
+            f"Target(NextRTT): {target}"
         )
 
-
 def parse_args():
-    parser = argparse.ArgumentParser(description="Smart network telemetry collector")
-    parser.add_argument("--interval", type=float, default=1.0, help="aggregation interval in seconds")
-    parser.add_argument("--window", type=int, default=30, help="rolling window length (in intervals)")
-    parser.add_argument(
-        "--csv",
-        type=str,
-        default="net_data.csv",
-        help="path to write CSV measurements",
-    )
-    parser.add_argument(
-        "--max-samples",
-        type=int,
-        default=5000,
-        help="cap RTT samples per interval to avoid unbounded memory use",
-    )
+    parser = argparse.ArgumentParser(description="Smart network telemetry collector v2")
+    parser.add_argument("--interval", type=float, default=0.05, help="aggregation interval in seconds")
+    parser.add_argument("--window", type=int, default=10, help="rolling window length")
+    parser.add_argument("--csv", type=str, default="train_data.csv", help="output CSV path")
+    parser.add_argument("--max-samples", type=int, default=10000, help="max samples per interval")
     return parser.parse_args()
 
-
-def main():
-    args = parse_args()
-    agent = SmartAgent(args.interval, args.window, args.csv, args.max_samples)
-    agent.run()
-
-
 if __name__ == "__main__":
-    main()
+    main_args = parse_args()
+    agent = SmartAgent(main_args.interval, main_args.window, main_args.csv, main_args.max_samples)
+    agent.run()
