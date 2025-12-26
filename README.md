@@ -16,8 +16,10 @@ eBPF-TokenFlow/
 ├── 📁 demo/                     # [应用平面] 演示和集成
 │   ├── hint_server.py          # Hint Server：提供网络状态和 token_rate 建议
 │   ├── llm_simulator.py        # LLM 模拟器：模拟 Token 生成并响应网络状态
+│   ├── real_llm_client.py      # ⭐ 真实 LLM 客户端：支持 vLLM 和 Ollama
 │   ├── dashboard.py            # Streamlit 实时监控仪表盘
-│   └── run_demo.sh             # 演示启动脚本
+│   ├── run_demo.sh             # 演示启动脚本（模拟器）
+│   └── run_real_llm.sh         # ⭐ 真实 LLM 启动脚本
 ├── 📁 pacer/                    # [LLM 侧边车] 自适应节流
 │   └── adaptive_token_pacer.py # 按网络状态自适应节流 LLM token 速率
 ├── 📁 Visualization/            # [分析工具] 数据可视化
@@ -93,7 +95,56 @@ cd demo
 streamlit run dashboard.py
 ```
 
-### 5. 可视化分析
+### 5. 真实 LLM 集成 (Real LLM Integration) ⭐ 新增
+
+使用真实的 LLM 推理引擎（vLLM 或 Ollama）进行网络感知的 Token 生成：
+
+#### 使用 vLLM
+
+```bash
+# 1. 确保 vLLM 服务正在运行（默认端口 8000）
+# 例如：python -m vllm.entrypoints.openai.api_server --model <model_name>
+
+# 2. 运行真实 LLM 客户端
+cd demo
+python real_llm_client.py \
+    --engine vllm \
+    --vllm-url http://localhost:8000/v1 \
+    --prompt "Tell me a story about network optimization"
+```
+
+#### 使用 Ollama
+
+```bash
+# 1. 确保 Ollama 正在运行（默认端口 11434）
+# 例如：ollama serve
+
+# 2. 下载模型（如果还没有）
+ollama pull llama2
+
+# 3. 运行真实 LLM 客户端
+cd demo
+python real_llm_client.py \
+    --engine ollama \
+    --ollama-model llama2 \
+    --prompt "Tell me a story about network optimization"
+```
+
+#### 使用启动脚本（推荐）
+
+```bash
+cd demo
+# 编辑 run_real_llm.sh 配置引擎和参数
+bash run_real_llm.sh
+```
+
+**特性**：
+- 自动查询 Hint Server 获取网络状态和推荐速率
+- 实时流式输出，显示生成内容
+- 自动速率控制，根据网络状况调整生成速度
+- 显示网络健康度和指标（RTT、重传等）
+
+### 6. 可视化分析
 
 生成 RTT 与 Token Rate 的对比图，验证流控效果：
 
@@ -123,6 +174,12 @@ python plot_pacing_effect.py
     *   提供独立的 Token 速率控制逻辑。
     *   支持本地 CLI 模式和云端 HTTP Server 模式。
     *   基于 RTT 和重传计数动态调整速率。
+
+4.  **真实 LLM 客户端** (`demo/real_llm_client.py`) ⭐ 新增
+    *   支持 **vLLM** 和 **Ollama** 两种真实推理引擎。
+    *   集成网络感知速率控制，自动遵循 Hint Server 的速率限制。
+    *   支持流式输出，实时显示生成内容。
+    *   在网络拥塞时自动降速，防止丢包和重传。
 
 ---
 
@@ -173,6 +230,7 @@ pip3 install pandas scikit-learn flask streamlit matplotlib joblib requests
 - ✅ **自适应流控**：基于网络状态动态调整 Token 生成速率（使用 Sigmoid 映射）
 - ✅ **Hint Server**：HTTP API 提供网络健康度和推荐速率
 - ✅ **LLM 模拟器**：模拟 Token 生成并响应网络状态
+- ✅ **真实 LLM 集成**：支持 vLLM 和 Ollama，实现真实的网络感知流控
 - ✅ **实时 Dashboard**：Streamlit 界面展示网络指标和异常检测结果
 - ✅ **数据可视化**：生成 RTT 与 Token Rate 对比图
 
@@ -180,7 +238,7 @@ pip3 install pandas scikit-learn flask streamlit matplotlib joblib requests
 
 我们制定了详细的后续开发计划，包括：
 - 🔲 GPU 监控和硬件关联
-- 🔲 真实 vLLM/Ollama 集成
+- ✅ **真实 vLLM/Ollama 集成**（已实现）
 - 🔲 PID 控制器（替代当前 Sigmoid 映射）
 - 🔲 LSTM/Transformer 模型
 - 🔲 在线增量学习
@@ -189,6 +247,16 @@ pip3 install pandas scikit-learn flask streamlit matplotlib joblib requests
 - 🔲 自动化测试
 
 详情请见 [ROADMAP.md](./ROADMAP.md)。
+
+### 🏭 工业级场景改进
+
+如果您计划将系统应用于生产环境，请参考 [PRODUCTION_REQUIREMENTS.md](./PRODUCTION_REQUIREMENTS.md) 了解详细的工业级改进需求，包括：
+- 分布式架构与高可用
+- 高级遥测系统（GPU、Socket Backlog）
+- 容错与自动恢复
+- 性能优化
+- 监控与可观测性
+- 安全与认证
 
 ---
 

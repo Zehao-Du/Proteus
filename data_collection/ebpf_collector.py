@@ -18,18 +18,33 @@ from bcc import BPF
 # ============================================================
 
 BPF_PROGRAM = r"""
+#ifndef KBUILD_MODNAME
+#define KBUILD_MODNAME "ebpf_tokenflow"
+#endif
+
+#ifndef __BPF_TRACING__
+#define __BPF_TRACING__
+#endif
+
+// 1. 强制屏蔽段寄存器和 CPU 类型宏，防止 6.x 内核冲突
+#undef __seg_gs
+#define __seg_gs
+#undef __seg_fs
+#define __seg_fs
+#undef __my_cpu_type
+#define __my_cpu_type(var) typeof(var)
+
+// 2. 预定义信号宏，防止信号数组越界报错
+#undef _NSIG_WORDS
+#define _NSIG_WORDS 4
+
+// 3. 补全缺失的内核结构体定义，解决 sizeof(struct bpf_wq) 报错
+struct bpf_wq { int x; };
+
 #include <uapi/linux/ptrace.h>
 #include <linux/types.h>
 
-// Fix for missing definitions in some kernels
-struct bpf_timer { u64 :64; u64 :64; };
-struct bpf_list_head { void *x; };
-struct bpf_list_node { void *x; };
-struct bpf_rb_root { void *x; };
-struct bpf_rb_node { void *x; };
-struct bpf_refcount { int x; };
-struct bpf_wq { int x; };
-
+// BCC 现代版本已内置这些结构，无需手动定义
 #ifndef BPF_PSEUDO_FUNC
 #define BPF_PSEUDO_FUNC 4
 #endif
@@ -37,7 +52,7 @@ struct bpf_wq { int x; };
 #include <net/sock.h>
 #include <bcc/proto.h>
 #include <linux/tcp.h>
-#include <linux/skbuff.h> // Needed for skb->len
+#include <linux/skbuff.h>
 
 BPF_PERF_OUTPUT(rtt_events);
 BPF_PERF_OUTPUT(retrans_events);

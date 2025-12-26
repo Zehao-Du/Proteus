@@ -22,12 +22,23 @@ class MultiStepLSTM(nn.Module):
         out, _ = self.lstm(x)
         return self.fc(out[:, -1, :])
 
+class AsymmetricMSELoss(nn.Module):
+    def __init__(self, penalty=15.0): 
+        super().__init__()
+        self.penalty = penalty
+
+    def forward(self, pred, target):
+        error = target - pred
+        # 严重惩罚低估（预测值 < 真实值），因为这会导致算力过度分配引发拥塞
+        loss = torch.where(error > 0, error**2 * self.penalty, error**2)
+        return torch.mean(loss)
+
 class SmartTokenPacer:
     def __init__(self, 
                  model_path=None, 
                  input_features=7, 
                  pred_len=10, 
-                 learning_rate=0.002): # 稍微调高LR以便在Demo中更快看到适应效果
+                 learning_rate=0.001):
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.pred_len = pred_len
@@ -35,13 +46,12 @@ class SmartTokenPacer:
         
         # 模型初始化
         self.model = MultiStepLSTM(input_features, 256, 2, pred_len).to(self.device)
-        # 初始化权重 (模拟冷启动)
         if model_path and os.path.exists(model_path):
             self.model.load_state_dict(torch.load(model_path, map_location=self.device))
         
-        # 在线学习组件
+        # 在线学习组件：切换为非对称损失
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
-        self.loss_fn = nn.MSELoss() # 基础 Loss，也可换成 Asymmetric
+        self.loss_fn = AsymmetricMSELoss(penalty=20.0) 
         
         # 经验池 & 延迟队列
         self.memory = deque(maxlen=2000)
@@ -65,10 +75,15 @@ class SmartTokenPacer:
         self.scaler_scale = np.array(scale)
         
     def _update_baseline(self, rtt):
-        self.min_rtt_window.append(rtt)
+        # 🔧 修复点：忽略小于 5ms (5000us) 的非法值，防止基准线被 0 污染
+        if rtt > 5000:
+            self.min_rtt_window.append(rtt)
         
     def get_baseline(self):
-        return min(self.min_rtt_window) if self.min_rtt_window else 20.0
+        # 🔧 修复点：强制设置最低物理基准为 30ms，适应公网环境
+        if not self.min_rtt_window:
+            return 30000.0
+        return max(30000.0, min(self.min_rtt_window))
 
     def step(self, current_metrics):
         """
@@ -125,31 +140,37 @@ class SmartTokenPacer:
         self.model.train()
 
         # ==========================================
-        # 3. 计算健康分 (Scoring) - 修正版
+        # 3. 计算健康分 (Scoring) - 激进版
         # ==========================================
         
-        # A. 预测值平滑 (保持不变)
+        # A. 预测值平滑 (降低惯性，加快响应)
         if self.smoothed_pred_rtt is None:
             self.smoothed_pred_rtt = pred_rtt
         else:
-            self.smoothed_pred_rtt = 0.3 * pred_rtt + 0.7 * self.smoothed_pred_rtt
+            self.smoothed_pred_rtt = 0.5 * pred_rtt + 0.5 * self.smoothed_pred_rtt
             
-        # B. 动态阈值 (保持不变)
+        # B. 动态阈值 (极限放宽版)
         base = self.get_baseline()
-        threshold = base * 1.5 + 30
+        # 针对当前 200ms 的环境，我们将安全区直接拉到 400ms
+        threshold = max(base * 3.0, 200000.0) 
         
         diff = self.smoothed_pred_rtt - threshold
         
-        # 🔧 修改点 1: 提高敏感度 (0.02 -> 0.1)
-        # 当 diff = -45 时:
-        # e^(0.1 * -45) = e^-4.5 ≈ 0.011
-        # Score = 1 / (1 + 0.011) ≈ 0.99 (满分！)
-        sensitivity = 0.1  
-        raw_score = 1.0 / (1.0 + np.exp(sensitivity * diff))
+        # 🔧 针对 200ms 级别环境，降低敏感度，只有真正“起飞”才刹车
+        val_for_sigmoid = diff / 1000.0 if abs(diff) > 1000 else diff
         
-        # 🔧 修改点 2: 降低平滑惯性 (0.9 -> 0.8)
-        # 让分数回升和下降稍微快一点，不要拖泥带水
-        smooth_factor = 0.8
+        sensitivity = 0.02  # 极低敏感度
+        exponent = np.clip(sensitivity * val_for_sigmoid, -15, 15)
+        raw_score = 1.0 / (1.0 + np.exp(exponent))
+        
+        # 🔧 极速响应恢复
+        # 如果预测值正在下降，让分数回升得快一点
+        if hasattr(self, 'prev_pred') and self.smoothed_pred_rtt < self.prev_pred:
+            smooth_factor = 0.2
+        else:
+            smooth_factor = 0.5
+        self.prev_pred = self.smoothed_pred_rtt
+        
         self.smoothed_score = (1 - smooth_factor) * raw_score + smooth_factor * self.smoothed_score
         
         return self.smoothed_score, self.smoothed_pred_rtt

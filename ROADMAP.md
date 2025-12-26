@@ -22,8 +22,18 @@ This document outlines the current limitations of the TokenFlow system and the d
     *   [ ] (Optional) HTTP/gRPC latency tracking via eBPF uprobes.
 
 *   **Task A2: Real LLM Engine Integration**
-    *   [ ] Deploy a real inference engine (e.g., **vLLM** or **Ollama**).
-    *   [ ] Develop `real_llm_client.py`: A client that sends prompts to the engine while respecting the rate limits from the Hint Server.
+    *   [x] Deploy a real inference engine (e.g., **vLLM** or **Ollama**). ✅ **已完成**
+    *   [x] Develop `real_llm_client.py`: A client that sends prompts to the engine while respecting the rate limits from the Hint Server. ✅ **已完成**
+
+*   **Task A3: Production-Grade Enhancements** 🏭 **工业级场景**
+    *   [ ] **分布式架构**: Hint Server 集群化、负载均衡、Redis 集成
+    *   [ ] **容错机制**: 自动恢复、降级策略、断路器模式
+    *   [ ] **性能优化**: 多流并发、连接池、异步 I/O、Token Bucket 算法
+    *   [ ] **监控系统**: Prometheus 指标、分布式追踪、告警系统
+    *   [ ] **安全认证**: API Key/OAuth2、HTTPS/TLS、数据加密
+    *   [ ] **数据采集优化**: 批量写入、数据压缩、异步处理
+    
+    > 📖 详细任务清单请参考 [PRODUCTION_REQUIREMENTS.md](./PRODUCTION_REQUIREMENTS.md)
 
 ### 🧑‍🔬 Member B: AI & Strategy Expert
 **Focus: Model Optimization & Control Algorithms**
