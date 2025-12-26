@@ -220,27 +220,65 @@ class EngineCore:
         self.hint_url = os.environ.get("VLLM_HINT_SERVER_URL", "http://localhost:5000/hint")
         self.pacer_interval = float(os.environ.get("VLLM_PACER_INTERVAL", "0.2"))
         self.pacer_running = True
+        
+        # 存储每个 client_index (user_id) 对应的健康度
+        self.per_user_health: dict[int, float] = {}
+        self.per_user_health_lock = threading.Lock()
+        
         self.pacer_thread = threading.Thread(target=self._network_pacer_loop, daemon=True)
         self.pacer_thread.start()
-        logger.info("Network-aware pacer thread started, querying: %s", self.hint_url)
+        logger.info("Network-aware pacer thread started (per-user mode), querying: %s", self.hint_url)
         # --- [NETWORK-AWARE SCHEDULING MODIFICATION END] ---
 
     def _network_pacer_loop(self):
-        """Background loop to query Hint Server and update Scheduler."""
-        import requests
+        """Background loop to query Hint Server and update per-request health factors."""
+        import requests as http_requests
         while self.pacer_running:
             try:
-                resp = requests.get(self.hint_url, timeout=0.1)
+                # 更新全局健康度
+                resp = http_requests.get(self.hint_url, timeout=0.1)
                 if resp.status_code == 200:
                     data = resp.json()
-                    health = data.get("health", 1.0)
-                    # Update scheduler's health factor
+                    global_health = data.get("health", 1.0)
+                    # Update scheduler's global health factor
                     if hasattr(self.scheduler, "set_health_factor"):
-                        self.scheduler.set_health_factor(health)
-            except Exception:
+                        self.scheduler.set_health_factor(global_health)
+                
+                # 更新每个用户的健康度
+                for user_id in [1, 2]:  # 支持的用户 ID
+                    try:
+                        resp = http_requests.get(f"{self.hint_url}?user_id={user_id}", timeout=0.1)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            health = data.get("health", 1.0)
+                            with self.per_user_health_lock:
+                                self.per_user_health[user_id] = health
+                    except Exception:
+                        pass
+                
+                # 更新所有运行中请求的健康度
+                if hasattr(self.scheduler, 'running'):
+                    with self.per_user_health_lock:
+                        for request in self.scheduler.running:
+                            # 从 request_id 解析 user_id (格式: "user{N}_xxx")
+                            user_id = self._extract_user_id(request.request_id)
+                            if user_id in self.per_user_health:
+                                request.health_factor = self.per_user_health[user_id]
+                            else:
+                                request.health_factor = global_health
+                                
+            except Exception as e:
                 # Silently fail, keep current factor
                 pass
             time.sleep(self.pacer_interval)
+
+    def _extract_user_id(self, request_id: str) -> int:
+        """从 request_id 中提取 user_id (格式: 'user{N}_xxx')"""
+        import re
+        match = re.match(r'^user(\d+)_', request_id)
+        if match:
+            return int(match.group(1))
+        return 0  # 默认用户 ID
 
     def _initialize_kv_caches(
         self, vllm_config: VllmConfig

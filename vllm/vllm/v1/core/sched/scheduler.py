@@ -267,8 +267,24 @@ class Scheduler(SchedulerInterface):
         req_to_new_blocks: dict[str, KVCacheBlocks] = {}
         num_scheduled_tokens: dict[str, int] = {}
         
-        # Apply network health factor to token budget
-        token_budget = int(self.max_num_scheduled_tokens * self.health_factor)
+        # --- [PER-REQUEST NETWORK-AWARE SCHEDULING] ---
+        # Apply global health factor to base token budget
+        base_token_budget = int(self.max_num_scheduled_tokens * self.health_factor)
+        
+        # Calculate per-request token budgets based on individual health_factors
+        # 计算每个请求的 token 配额，按健康度比例分配
+        if self.running:
+            total_health = sum(max(0.01, r.health_factor) for r in self.running)
+            per_request_budgets = {}
+            for r in self.running:
+                # 每个请求按 health_factor 比例分配 token
+                ratio = max(0.01, r.health_factor) / total_health
+                per_request_budgets[r.request_id] = int(base_token_budget * ratio)
+        else:
+            per_request_budgets = {}
+        
+        token_budget = base_token_budget
+        # --- [END PER-REQUEST NETWORK-AWARE SCHEDULING] ---
         
         # Encoder-related.
         scheduled_encoder_inputs: dict[str, list[int]] = {}
@@ -307,7 +323,12 @@ class Scheduler(SchedulerInterface):
             )
             if 0 < self.scheduler_config.long_prefill_token_threshold < num_new_tokens:
                 num_new_tokens = self.scheduler_config.long_prefill_token_threshold
-            num_new_tokens = min(num_new_tokens, token_budget)
+            
+            # --- [PER-REQUEST BUDGET ENFORCEMENT] ---
+            # Apply per-request token budget based on health_factor
+            request_budget = per_request_budgets.get(request.request_id, token_budget)
+            num_new_tokens = min(num_new_tokens, token_budget, request_budget)
+            # --- [END PER-REQUEST BUDGET ENFORCEMENT] ---
 
             # Make sure the input position does not exceed the max model len.
             # This is necessary when using spec decoding.

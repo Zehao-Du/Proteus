@@ -1,0 +1,11 @@
+session_id,group,prompt,total_tokens,successful_tokens,session_duration,first_token_latency,etps,avg_health,avg_rtt,retransmits,errors,timestamp
+1,pacing_on,Write a detailed explanation of how neural network...,200,200,1.637,0.017,122.2,1.0,0,0,0,2025-12-26T04:38:53.939097
+2,pacing_on,Write a detailed explanation of how neural network...,200,200,1.635,0.017,122.29,1.0,0,0,0,2025-12-26T04:38:57.875816
+3,pacing_on,Write a detailed explanation of how neural network...,200,200,1.64,0.017,121.92,1.0,0,0,0,2025-12-26T04:39:01.817470
+4,pacing_on,Write a detailed explanation of how neural network...,200,200,1.648,0.017,121.37,1.0,0,0,0,2025-12-26T04:39:05.766550
+5,pacing_on,Write a detailed explanation of how neural network...,200,200,1.642,0.018,121.82,1.0,0,0,0,2025-12-26T04:39:09.710065
+1,pacing_off,Write a detailed explanation of how neural network...,200,200,1.639,0.015,122.06,1.0,0,0,0,2025-12-26T04:39:14.651453
+2,pacing_off,Write a detailed explanation of how neural network...,200,200,1.637,0.018,122.15,1.0,0,0,0,2025-12-26T04:39:18.590075
+3,pacing_off,Write a detailed explanation of how neural network...,200,200,1.635,0.018,122.34,1.0,0,0,0,2025-12-26T04:39:22.526315
+4,pacing_off,Write a detailed explanation of how neural network...,200,200,1.629,0.018,122.75,1.0,0,0,0,2025-12-26T04:39:26.456748
+5,pacing_off,Write a detailed explanation of how neural network...,200,200,1.633,0.017,122.46,1.0,0,0,0,2025-12-26T04:39:30.391230

@@ -138,6 +138,10 @@ class Request:
         self.skip_reading_prefix_cache = self.get_skip_reading_prefix_cache()
         
         # --- [NETWORK-AWARE SCHEDULING MODIFICATION START] ---
+        # Per-request health factor (0.0 - 1.0)
+        # 每个请求独立的健康度，用于 per-user 算力分配
+        self.health_factor: float = 1.0
+        
         # Control Signals (由 API 设置)
         self.target_qps: float = -1.0  # R_net: 目标网络速率
         self.dynamic_weight: float = 1.0  # W: 动态调度权重
