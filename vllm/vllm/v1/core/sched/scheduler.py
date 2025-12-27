@@ -267,24 +267,22 @@ class Scheduler(SchedulerInterface):
         req_to_new_blocks: dict[str, KVCacheBlocks] = {}
         num_scheduled_tokens: dict[str, int] = {}
         
-        # --- [PER-REQUEST NETWORK-AWARE SCHEDULING] ---
-        # Apply global health factor to base token budget
-        base_token_budget = int(self.max_num_scheduled_tokens * self.health_factor)
+        # --- [NETWORK-AWARE SCHEDULING] ---
+        # GPU 吞吐量不变，但优先调度高健康度的请求
+        # 高健康度请求更早进入 running，更早完成
+        # 低健康度请求等待，减少浪费
+        token_budget = self.max_num_scheduled_tokens
         
-        # Calculate per-request token budgets based on individual health_factors
-        # 计算每个请求的 token 配额，按健康度比例分配
+        # 1. 对 running 队列按健康度排序
         if self.running:
-            total_health = sum(max(0.01, r.health_factor) for r in self.running)
-            per_request_budgets = {}
-            for r in self.running:
-                # 每个请求按 health_factor 比例分配 token
-                ratio = max(0.01, r.health_factor) / total_health
-                per_request_budgets[r.request_id] = int(base_token_budget * ratio)
-        else:
-            per_request_budgets = {}
+            self.running.sort(key=lambda r: -r.health_factor)
         
-        token_budget = base_token_budget
-        # --- [END PER-REQUEST NETWORK-AWARE SCHEDULING] ---
+        # 2. 对 waiting 队列重新排序（基于 health_factor）
+        #    vLLM 使用 heapq，需要重新构建堆
+        if hasattr(self.waiting, '_heap') and self.waiting:
+            import heapq
+            heapq.heapify(self.waiting._heap)
+        # --- [END NETWORK-AWARE SCHEDULING] ---
         
         # Encoder-related.
         scheduled_encoder_inputs: dict[str, list[int]] = {}
@@ -297,8 +295,19 @@ class Scheduler(SchedulerInterface):
 
         # First, schedule the RUNNING requests.
         req_index = 0
+        # --- [NETWORK-AWARE: 调度计数器，用于概率跳过] ---
+        if not hasattr(self, '_schedule_step_counter'):
+            self._schedule_step_counter = 0
+        self._schedule_step_counter += 1
+        # --- [END] ---
+        
         while req_index < len(self.running) and token_budget > 0:
             request = self.running[req_index]
+
+            # --- [NETWORK-AWARE] ---
+            # 不跳过 running 中的请求，保持 GPU 利用率
+            # 调度优化在 waiting 队列排序中完成（见下方）
+            # --- [END NETWORK-AWARE] ---
 
             if (
                 request.num_output_placeholders > 0
@@ -324,11 +333,10 @@ class Scheduler(SchedulerInterface):
             if 0 < self.scheduler_config.long_prefill_token_threshold < num_new_tokens:
                 num_new_tokens = self.scheduler_config.long_prefill_token_threshold
             
-            # --- [PER-REQUEST BUDGET ENFORCEMENT] ---
-            # Apply per-request token budget based on health_factor
-            request_budget = per_request_budgets.get(request.request_id, token_budget)
-            num_new_tokens = min(num_new_tokens, token_budget, request_budget)
-            # --- [END PER-REQUEST BUDGET ENFORCEMENT] ---
+            # --- [NETWORK-AWARE: 不限制单个请求配额，用全局预算] ---
+            # 健康度高的请求已经排在前面，会优先消耗 token_budget
+            num_new_tokens = min(num_new_tokens, token_budget)
+            # --- [END NETWORK-AWARE] ---
 
             # Make sure the input position does not exceed the max model len.
             # This is necessary when using spec decoding.
@@ -674,6 +682,15 @@ class Scheduler(SchedulerInterface):
                     continue
 
                 self._update_connector_prefix_cache_stats(request)
+
+                # [NETWORK-AWARE] 记录调度顺序（实际从 waiting 队列取出的顺序）
+                user_id = 0
+                if hasattr(request, 'request_id'):
+                    import re
+                    match = re.search(r'user(\d+)', request.request_id)
+                    if match:
+                        user_id = int(match.group(1))
+                logger.info(f"[SCHEDULER] Scheduled request user_id={user_id} health={request.health_factor:.3f} priority={request.priority} (waiting_queue_size={len(self.waiting)})")
 
                 self.running.append(request)
                 if self.log_stats:

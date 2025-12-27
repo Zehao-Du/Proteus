@@ -142,21 +142,20 @@ class ServerState:
         for user_id, simulator in self.users.items():
             # 获取 RTT
             rtt = simulator.step()
-            
-            # 计算健康度
-            pacer = self.pacers[user_id]
             state = self.user_states[user_id]
             
-            log_rtt = np.log1p(rtt)
-            rtt_diff = log_rtt - state.prev_log_rtt
-            
-            score, pred_rtt = pacer.step([log_rtt, rtt_diff])
+            # --- [直接用 RTT 计算健康度，差异更明显] ---
+            # RTT 低 → 健康度高, RTT 高 → 健康度低
+            # 使用指数衰减：health = exp(-rtt / 500)
+            # 使用 500 而不是 100，以适配新的 RTT 分布 (loc=400, scale=1000)
+            score = np.exp(-rtt / 500.0)
+            score = max(0.1, min(1.0, score))  # 限制在 [0.1, 1.0]
+            # --- [END] ---
             
             # 更新状态
             state.current_rtt = rtt
             state.health_score = score
             state.max_receive_rate = simulator.get_max_receive_rate()
-            state.prev_log_rtt = log_rtt
             
             health_scores.append((user_id, score))
         
@@ -223,6 +222,41 @@ def get_hint():
                     "rtt": int(state.current_rtt),
                     "max_receive_rate": round(state.max_receive_rate, 1),
                     "allocated_ratio": round(state.allocated_ratio, 3)
+                }
+            })
+        elif user_id:
+            # 动态生成用户健康度（支持任意 user_id）
+            # 关键：使用与 timeline_experiment.py 完全相同的逻辑！
+            # 
+            # 使用 user_id 作为种子，确保与 timeline_experiment.py 一致
+            # 这样每个 user_id 的 RTT 在两边都相同
+            import numpy as np_local
+            np_local.random.seed(user_id + 42)  # +42 作为偏移，与 timeline_experiment.py 相同！
+            
+            # 正态分布 RTT：mean=400ms, std=1000ms
+            rtt = np_local.random.normal(loc=400, scale=1000)
+            rtt = float(np_local.clip(rtt, 0, 800000))
+            
+            # 健康度：health = exp(-RTT / 500)
+            # 使用 500 而不是 150，以适配新的 RTT 分布 (loc=400, scale=1000)
+            import math
+            health = math.exp(-rtt / 500.0)
+            
+            # Baseline 模式下返回固定健康度
+            if STATE.mode == "baseline":
+                health = 1.0
+            
+            return jsonify({
+                "health": round(health, 3),
+                "token_rate": round(health * 100, 1),
+                "user_id": user_id,
+                "mode": STATE.mode,
+                "dynamic": True,
+                "rtt": round(rtt, 1),
+                "metrics": {
+                    "rtt": int(rtt),
+                    "max_receive_rate": round(500 / max(rtt, 10), 1),
+                    "allocated_ratio": round(health, 3)
                 }
             })
         else:
@@ -322,16 +356,15 @@ def main():
     args = parser.parse_args()
     
     print("=" * 60)
-    print("  Multi-User Hint Server with Simulated Network")
+    print("  Multi-User Hint Server with Dynamic RTT Generation")
     print("=" * 60)
     
-    # 初始化用户
-    STATE.add_user(user_id=1, base_rtt=150, volatility="chaotic")   # 用户1：网络差
-    STATE.add_user(user_id=2, base_rtt=30, volatility="stable")     # 用户2：网络好
-    
-    print(f"\n👥 Users configured:")
-    for uid, sim in STATE.users.items():
-        print(f"   User {uid}: base_rtt={sim.base_rtt}ms, volatility={sim.volatility}")
+    # 不再使用预配置用户！
+    # 使用 user_id 作为种子的正态分布（与 timeline_experiment.py 完全一致）
+    print(f"\n👥 Dynamic user support enabled (seed=user_id+42, normal RTT)")
+    print(f"   RTT ~ N(400ms, 1000ms), clipped to [0, 800000]ms")
+    print(f"   health = exp(-RTT / 500)")
+    print(f"   This ensures perfect consistency with timeline_experiment.py!")
     
     # 设置初始模式
     STATE.mode = args.mode

@@ -159,7 +159,7 @@ class Request:
         request: EngineCoreRequest,
         block_hasher: Callable[["Request"], list["BlockHash"]] | None,
     ) -> "Request":
-        return cls(
+        req = cls(
             request_id=request.request_id,
             client_index=request.client_index,
             prompt_token_ids=request.prompt_token_ids,
@@ -175,6 +175,22 @@ class Request:
             trace_headers=request.trace_headers,
             block_hasher=block_hasher,
         )
+        
+        # --- [NETWORK-AWARE SCHEDULING MODIFICATION START] ---
+        # 从 extra_args 中提取 health_factor（如果提供）
+        # 这样客户端可以直接传递健康度，避免查询 hint server
+        if request.sampling_params and hasattr(request.sampling_params, 'extra_args'):
+            extra_args = request.sampling_params.extra_args
+            if extra_args and isinstance(extra_args, dict):
+                health_factor = extra_args.get("health_factor")
+                if health_factor is not None:
+                    try:
+                        req.health_factor = float(health_factor)
+                    except (ValueError, TypeError):
+                        pass  # 使用默认值 1.0
+        # --- [NETWORK-AWARE SCHEDULING MODIFICATION END] ---
+        
+        return req
 
     def append_output_token_ids(
         self,
@@ -276,25 +292,25 @@ class Request:
     
     def __lt__(self, other: "Request") -> bool:
         """
-        Compare two requests based on priority, arrival time, and request ID.
+        Compare two requests based on priority, health_factor, and arrival time.
         Used in priority scheduling.
         
         [NETWORK-AWARE SCHEDULING MODIFICATION]
-        Modified to incorporate dynamic_weight for network-aware scheduling.
-        Higher dynamic_weight requests get higher priority (appear earlier).
+        Modified to incorporate health_factor for network-aware scheduling.
+        Higher health_factor = better network = higher priority.
         """
         # --- [NETWORK-AWARE SCHEDULING MODIFICATION START] ---
         # First compare by priority (existing behavior)
         if self.priority != other.priority:
             return self.priority < other.priority
         
-        # Then compare by dynamic_weight (higher weight = higher priority)
-        # We use (1.0 / dynamic_weight) so that higher weight = smaller value = higher priority
-        if abs(self.dynamic_weight - other.dynamic_weight) > 1e-6:
-            return (1.0 / self.dynamic_weight) < (1.0 / other.dynamic_weight)
+        # Then compare by health_factor (higher health = higher priority)
+        # Higher health = smaller value in heap = scheduled first
+        if abs(self.health_factor - other.health_factor) > 0.01:
+            return self.health_factor > other.health_factor  # 高健康度优先
         # --- [NETWORK-AWARE SCHEDULING MODIFICATION END] ---
         
-        # Finally compare by arrival time (FCFS within same priority and weight)
+        # Finally compare by arrival time (FCFS within same priority and health)
         if self.arrival_time != other.arrival_time:
             return self.arrival_time < other.arrival_time
         if self.request_id != other.request_id:

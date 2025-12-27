@@ -231,51 +231,111 @@ class EngineCore:
         # --- [NETWORK-AWARE SCHEDULING MODIFICATION END] ---
 
     def _network_pacer_loop(self):
-        """Background loop to query Hint Server and update per-request health factors."""
+        """Background loop to query Hint Server and update per-request health factors.
+        
+        [CRITICAL FIX] 现在同时更新 running 和 waiting 队列中的请求，
+        并触发 waiting 队列的重新排序，确保高健康度请求优先进入 running。
+        """
         import requests as http_requests
+        import heapq
+        
+        # 记录当前模式，用于检测模式切换
+        current_mode = None
+        
         while self.pacer_running:
             try:
-                # 更新全局健康度
-                resp = http_requests.get(self.hint_url, timeout=0.1)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    global_health = data.get("health", 1.0)
-                    # Update scheduler's global health factor
-                    if hasattr(self.scheduler, "set_health_factor"):
-                        self.scheduler.set_health_factor(global_health)
+                # 1. 获取全局健康度和当前模式
+                global_health = 1.0
+                new_mode = None
+                try:
+                    resp = http_requests.get(self.hint_url, timeout=0.1)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        global_health = data.get("health", 1.0)
+                        new_mode = data.get("mode", None)
+                        if hasattr(self.scheduler, "set_health_factor"):
+                            self.scheduler.set_health_factor(global_health)
+                except Exception:
+                    pass
                 
-                # 更新每个用户的健康度
-                for user_id in [1, 2]:  # 支持的用户 ID
-                    try:
-                        resp = http_requests.get(f"{self.hint_url}?user_id={user_id}", timeout=0.1)
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            health = data.get("health", 1.0)
-                            with self.per_user_health_lock:
-                                self.per_user_health[user_id] = health
-                    except Exception:
-                        pass
-                
-                # 更新所有运行中请求的健康度
-                if hasattr(self.scheduler, 'running'):
+                # 检测模式切换，清除缓存
+                if new_mode and current_mode and new_mode != current_mode:
+                    logger.info(f"[NETWORK-AWARE] Mode changed from {current_mode} to {new_mode}, clearing cache")
                     with self.per_user_health_lock:
-                        for request in self.scheduler.running:
-                            # 从 request_id 解析 user_id (格式: "user{N}_xxx")
-                            user_id = self._extract_user_id(request.request_id)
-                            if user_id in self.per_user_health:
-                                request.health_factor = self.per_user_health[user_id]
-                            else:
-                                request.health_factor = global_health
+                        self.per_user_health.clear()
+                current_mode = new_mode
+                self._current_mode = new_mode  # 保存为实例变量，供 add_request 使用
+                
+                # 2. 收集所有需要查询健康度的用户（running + waiting）
+                all_requests = []
+                if hasattr(self.scheduler, 'running'):
+                    all_requests.extend(list(self.scheduler.running))
+                if hasattr(self.scheduler, 'waiting') and hasattr(self.scheduler.waiting, '_heap'):
+                    # 从 waiting 队列获取请求
+                    for item in self.scheduler.waiting._heap:
+                        if hasattr(item, 'request_id'):
+                            all_requests.append(item)
+                        elif isinstance(item, tuple) and len(item) > 0:
+                            # 可能是 (priority, request) 元组
+                            for elem in item:
+                                if hasattr(elem, 'request_id'):
+                                    all_requests.append(elem)
+                                    break
+                
+                # 3. 从 Hint Server 批量获取健康度
+                # Hint Server 使用与 timeline_experiment.py 完全相同的 RTT 逻辑
+                needs_reheapify = False
+                
+                for request in all_requests:
+                    user_id = self._extract_user_id(request.request_id)
+                    if user_id == 0:
+                        user_id = hash(request.request_id) % 10000 + 1
+                    
+                    # 从缓存获取健康度
+                    new_health = 1.0
+                    if user_id not in self.per_user_health:
+                        # 查询 Hint Server（只在第一次查询）
+                        try:
+                            resp = http_requests.get(f"{self.hint_url}?user_id={user_id}", timeout=0.05)
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                new_health = data.get("health", 1.0)
+                                with self.per_user_health_lock:
+                                    self.per_user_health[user_id] = new_health
+                        except Exception:
+                            pass
+                    else:
+                        with self.per_user_health_lock:
+                            new_health = self.per_user_health[user_id]
+                    
+                    # 更新请求的健康度
+                    old_health = request.health_factor
+                    request.health_factor = new_health
+                    
+                    # 如果健康度变化，标记需要重新排序
+                    if abs(old_health - new_health) > 0.01:
+                        needs_reheapify = True
+                
+                # 4. 重新排序 waiting 队列（关键！）
+                if needs_reheapify and hasattr(self.scheduler, 'waiting'):
+                    if hasattr(self.scheduler.waiting, '_heap'):
+                        heapq.heapify(self.scheduler.waiting._heap)
                                 
             except Exception as e:
-                # Silently fail, keep current factor
                 pass
             time.sleep(self.pacer_interval)
 
     def _extract_user_id(self, request_id: str) -> int:
-        """从 request_id 中提取 user_id (格式: 'user{N}_xxx')"""
+        """从 request_id 中提取 user_id
+        
+        支持多种格式:
+        - 'user{N}_xxx' -> N
+        - 'chatcmpl-user{N}_xxx' -> N (vLLM 会添加 chatcmpl- 前缀)
+        - 其他格式 -> 0
+        """
         import re
-        match = re.match(r'^user(\d+)_', request_id)
+        # 匹配 user{N}_ 无论它在字符串的哪个位置
+        match = re.search(r'user(\d+)_', request_id)
         if match:
             return int(match.group(1))
         return 0  # 默认用户 ID
@@ -361,6 +421,57 @@ class EngineCore:
                 "Got kv_transfer_params, but no KVConnector found. "
                 "Disabling KVTransfer for this request."
             )
+
+        # --- [NETWORK-AWARE SCHEDULING] ---
+        # 优先使用请求中直接传递的 health_factor（通过 vllm_xargs）
+        # 如果没有提供，则从 Hint Server 获取（fallback）
+        # 检查是否从 extra_args 中提取到了 health_factor
+        health_from_request = False
+        
+        # 检查 extra_args 中是否有 health_factor（最可靠的方法）
+        if request.sampling_params and hasattr(request.sampling_params, 'extra_args'):
+            extra_args = request.sampling_params.extra_args
+            if extra_args and isinstance(extra_args, dict) and "health_factor" in extra_args:
+                health_from_request = True
+                # 直接从 extra_args 读取并设置（确保值正确）
+                try:
+                    health_val = float(extra_args["health_factor"])
+                    request.health_factor = health_val
+                    logger.info(f"[NETWORK-AWARE] Request {request.request_id[:20]}... health={health_val:.3f} (from vllm_xargs)")
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"[NETWORK-AWARE] Failed to parse health_factor from extra_args: {e}")
+                    health_from_request = False
+        
+        if not health_from_request:
+            # 请求中没有提供 health_factor，从 Hint Server 获取
+            user_id = self._extract_user_id(request.request_id)
+            if user_id == 0:
+                user_id = hash(request.request_id) % 10000 + 1
+            
+            with self.per_user_health_lock:
+                # 使用缓存
+                if user_id in self.per_user_health:
+                    request.health_factor = self.per_user_health[user_id]
+                else:
+                    # 查询 Hint Server（只在第一次查询，且请求中没有提供 health_factor）
+                    health = 1.0
+                    try:
+                        import requests as http_requests
+                        resp = http_requests.get(f"{self.hint_url}?user_id={user_id}", timeout=0.05)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            health = data.get("health", 1.0)
+                            logger.info(f"[NETWORK-AWARE] Request {request.request_id[:20]}... user_id={user_id} health={health:.3f} (from hint server)")
+                    except Exception as e:
+                        # Hint Server 不可用，使用默认值
+                        pass
+                    
+                    self.per_user_health[user_id] = health
+                    request.health_factor = health
+        else:
+            # 请求中已经提供了 health_factor（从 extra_args 提取）
+            logger.info(f"[NETWORK-AWARE] Request {request.request_id[:20]}... health={request.health_factor:.3f} (from request vllm_xargs)")
+        # --- [END NETWORK-AWARE SCHEDULING] ---
 
         self.scheduler.add_request(request)
 

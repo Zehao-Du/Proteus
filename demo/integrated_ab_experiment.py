@@ -169,14 +169,44 @@ class IntegratedExperiment:
                                 rtt_samples.append(rtt)
                                 health_samples.append(health)
                                 
-                                # 模拟网络传输：根据 RTT 决定是否"成功接收"
-                                # 简化模型：如果生成速率 > 最大接收速率，则有概率丢失
-                                # 这里我们用概率模型来模拟
-                                receive_prob = min(1.0, max_rate / self.total_budget)
-                                if np.random.random() < receive_prob:
+                                # --- [发送速率 vs 网络容量 模型] ---
+                                # 物理原理：
+                                # 1. 网络容量 = max_receive_rate (tokens/s)，由 RTT 决定
+                                # 2. 发送速率 = 当前 token 生成速率
+                                # 3. 如果 发送 > 容量，缓冲区溢出，丢包
+                                # 4. 如果 发送 ≤ 容量，几乎不丢包
+                                #
+                                # max_receive_rate 计算：RTT 低 → 容量大
+                                # capacity = 500 / max(rtt, 10) tokens/s
+                                # RTT=20ms  → 25 tokens/s
+                                # RTT=100ms → 5 tokens/s
+                                # RTT=400ms → 1.25 tokens/s
+                                
+                                network_capacity = 500.0 / max(rtt, 10)  # tokens/s
+                                
+                                # 计算当前发送速率
+                                elapsed = time.time() - session.start_time
+                                if elapsed > 0.1:
+                                    send_rate = session.tokens_generated / elapsed
+                                else:
+                                    send_rate = 50  # 默认估计
+                                
+                                # 丢包率 = max(0, (发送 - 容量) / 发送)
+                                if send_rate <= network_capacity:
+                                    # 网络能承受，不丢包
                                     session.tokens_effective += 1
                                 else:
-                                    session.tokens_wasted += 1
+                                    # 网络过载，按比例丢包
+                                    keep_rate = network_capacity / send_rate
+                                    if not hasattr(session, '_effective_accumulator'):
+                                        session._effective_accumulator = 0.0
+                                    session._effective_accumulator += keep_rate
+                                    if session._effective_accumulator >= 1.0:
+                                        session.tokens_effective += 1
+                                        session._effective_accumulator -= 1.0
+                                    else:
+                                        session.tokens_wasted += 1
+                                # --- [END 发送速率模型] ---
                                 
                                 # 打印进度
                                 sys.stdout.write(content)
@@ -202,7 +232,7 @@ class IntegratedExperiment:
     ) -> ExperimentResult:
         """运行一组实验"""
         print(f"\n{'='*60}")
-        print(f"📊 Running {mode.upper()} Group")
+        print(f"📊 Running {mode.upper()} Group (CONCURRENT)")
         print(f"{'='*60}")
         
         # 设置模式
@@ -210,21 +240,29 @@ class IntegratedExperiment:
         time.sleep(0.5)  # 等待模式切换生效
         
         sessions = []
+        results_lock = threading.Lock()
         start_time = time.time()
         
-        # 为每个用户运行会话
-        for i, (prompt, user_id) in enumerate(zip(prompts, user_ids)):
-            print(f"\n[User {user_id}] Prompt: {prompt[:50]}...")
-            print("-" * 40)
-            
+        def run_user_session(prompt, user_id):
+            """在独立线程中运行用户会话"""
+            print(f"\n[User {user_id}] Starting: {prompt[:50]}...")
             session = self._generate_tokens(prompt, max_tokens, user_id)
-            sessions.append(session)
-            
+            with results_lock:
+                sessions.append(session)
             print(f"\n✅ User {user_id}: Generated={session.tokens_generated}, "
                   f"Effective={session.tokens_effective}, "
                   f"Wasted={session.tokens_wasted}")
-            
-            time.sleep(1)  # 会话间隔
+        
+        # 并发运行所有用户的请求
+        threads = []
+        for prompt, user_id in zip(prompts, user_ids):
+            t = threading.Thread(target=run_user_session, args=(prompt, user_id))
+            threads.append(t)
+            t.start()
+        
+        # 等待所有线程完成
+        for t in threads:
+            t.join()
         
         end_time = time.time()
         duration = end_time - start_time
@@ -248,14 +286,15 @@ class IntegratedExperiment:
     def run_experiment(
         self,
         prompts: List[str] = None,
-        max_tokens: int = 100,
+        max_tokens: int = 200,  # 增加 token 数，让请求有更长的并发时间
         user_ids: List[int] = [1, 2]
     ):
         """运行完整 A/B 实验"""
         if prompts is None:
+            # 使用更长的 prompts，确保两个请求有足够的重叠时间
             prompts = [
-                "Write a detailed explanation of how neural networks learn through backpropagation.",
-                "Explain the concept of gradient descent and its variants in machine learning."
+                "Write a very detailed and comprehensive explanation of how neural networks learn through backpropagation, including the mathematical foundations and practical applications.",
+                "Explain in great detail the concept of gradient descent and all its variants in machine learning, with examples and comparisons."
             ]
         
         print("\n" + "🚀" * 20)
@@ -343,10 +382,25 @@ def main():
     parser = argparse.ArgumentParser(description="Integrated A/B Experiment")
     parser.add_argument("--vllm-url", default="http://localhost:8000/v1")
     parser.add_argument("--hint-url", default="http://localhost:5000")
-    parser.add_argument("--max-tokens", type=int, default=100)
-    parser.add_argument("--prompt1", default="Write a detailed explanation of neural networks.")
-    parser.add_argument("--prompt2", default="Explain machine learning optimization techniques.")
+    parser.add_argument("--max-tokens", type=int, default=200)
+    parser.add_argument("--num-users", type=int, default=8)  # 增加到 8 个用户！
     args = parser.parse_args()
+    
+    # 生成多个用户的 prompts
+    base_prompts = [
+        "Write a detailed explanation of deep learning architectures.",
+        "Explain optimization algorithms in machine learning.",
+        "Describe the process of training large language models.",
+        "Write about the history of artificial intelligence.",
+        "Explain how neural networks learn patterns from data.",
+        "Describe the transformer architecture in detail.",
+        "Write about reinforcement learning algorithms.",
+        "Explain the concept of attention mechanisms in AI.",
+    ]
+    
+    # 用户 ID 分配：1-4 网络差；5-8 网络好（需要更新 hint server）
+    user_ids = list(range(1, args.num_users + 1))
+    prompts = base_prompts[:args.num_users]
     
     experiment = IntegratedExperiment(
         vllm_url=args.vllm_url,
@@ -354,9 +408,9 @@ def main():
     )
     
     experiment.run_experiment(
-        prompts=[args.prompt1, args.prompt2],
+        prompts=prompts,
         max_tokens=args.max_tokens,
-        user_ids=[1, 2]
+        user_ids=user_ids
     )
 
 

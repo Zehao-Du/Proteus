@@ -3,9 +3,8 @@
 """Sequence and its related classes."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, List
+from typing import TYPE_CHECKING, Any
 
-import time
 import torch
 
 if TYPE_CHECKING:
@@ -97,76 +96,3 @@ class IntermediateTensors:
 
     def __repr__(self) -> str:
         return f"IntermediateTensors(tensors={self.tensors})"
-
-
-class Sequence:
-    """Represents a single sequence in a SequenceGroup.
-    
-    This is a minimal placeholder class for compatibility.
-    In a full implementation, this would contain sequence-specific data.
-    """
-    def __init__(self, seq_id: str):
-        self.seq_id = seq_id
-
-
-class SequenceGroup:
-    """
-    A group of sequences that share the same prompt and KV cache blocks.
-    
-    This class has been extended with network-aware scheduling capabilities
-    to support dynamic rate control based on network conditions.
-    """
-    
-    def __init__(
-        self,
-        request_id: str,
-        seqs: List[Sequence],
-        arrival_time: float,
-        # ... (保留现有参数，如果有的话)
-    ) -> None:
-        self.request_id = request_id
-        self.seqs = seqs
-        self.arrival_time = arrival_time
-        
-        # --- [NETWORK-AWARE SCHEDULING MODIFICATION START] ---
-        # Control Signals (由 API 设置)
-        self.target_qps: float = -1.0  # R_net: 目标网络速率
-        self.dynamic_weight: float = 1.0  # W: 动态调度权重
-        
-        # Instrumentation / Metrics (用于计算 R_gpu)
-        self.total_tokens_generated: int = 0
-        self.gpu_execution_start_time: float = time.time()
-        self.last_stats_update_time: float = time.time()
-        self.active_time_cumulative: float = 0.0  # 累计有效计算时间
-        # --- [NETWORK-AWARE SCHEDULING MODIFICATION END] ---
-    
-    def get_actual_gpu_rate(self) -> float:
-        """
-        [NEW METHOD]
-        Calculates the actual generation rate (Tokens Per Second) 
-        based on active execution time.
-        
-        Formula: R_gpu = total_tokens_generated / max(active_time_cumulative, 0.001)
-        
-        Returns:
-            float: The actual GPU generation rate in tokens per second.
-                  Returns 0.0 if active_time_cumulative is too small.
-        """
-        if self.active_time_cumulative <= 0.001:
-            return 0.0
-        
-        return self.total_tokens_generated / self.active_time_cumulative
-    
-    def update_execution_stats(self, new_tokens: int, time_delta: float):
-        """
-        [NEW METHOD]
-        Called by the scheduler after a step is executed.
-        Updates the cumulative statistics for rate calculation.
-        
-        Args:
-            new_tokens: Number of new tokens generated in this step
-            time_delta: Time spent in active execution (in seconds)
-        """
-        self.total_tokens_generated += new_tokens
-        self.active_time_cumulative += time_delta
-        self.last_stats_update_time = time.time()
