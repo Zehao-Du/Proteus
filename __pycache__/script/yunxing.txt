@@ -1,0 +1,56 @@
+CUDA_VISIBLE_DEVICES=1 vllm serve Qwen/Qwen3-4B-Instruct-2507 \
+  --max-num-seqs 256 \
+  --scheduling-policy priority
+
+CUDA_VISIBLE_DEVICES=0 vllm serve Qwen/Qwen3-30B-A3B-Instruct-2507 \
+  --max-num-seqs 256 \
+  --scheduling-policy priority \
+  --max-model-len 32678 \
+  --port 8001
+ 
+python timeline_experiment.py --max-tokens 200 --qps 50.0
+
+vLLM:
+vllm/v1/core/sched/scheduler.py
+vllm/v1/engine/core.py
+vllm/v1/request.py
+
+
+进入docker：docker exec -it open-webui bash
+
+网页部署命令：
+1.启动后端 
+vllm serve Qwen/Qwen3-4B-Instruct-2507 
+2.启动前端
+docker start open-webui（如果是重启服务器）
+如果是第一次运行或意外删除了 
+docker run -d \
+  -p 8080:8080 \
+  -v open-webui-data:/app/backend/data \
+  -v /home/argustest/eBPF-TokenFlow/my-open-webui/backend:/app/backend \
+  -v /home/argustest/eBPF-TokenFlow/my-open-webui/build:/app/build \
+  -e OPENAI_API_BASE_URL="http://172.17.0.1:8000/v1;http://172.17.0.1:8001/v1" \
+  -e OPENAI_API_KEY=EMPTY \
+  --name open-webui \
+  --restart always \
+  ghcr.io/open-webui/open-webui:main
+3.启动内网穿透 (Cloudflare Tunnel)
+# 方式一：使用持久化域名 riverli1616.uk（推荐）
+bash /home/argustest/eBPF-TokenFlow/start_cloudflare_tunnel.sh
+# 访问地址: https://riverli1616.uk
+
+# 方式二：临时 URL（测试用）
+# nohup cloudflared tunnel --url http://127.0.0.1:8080 > tunnel.log 2>&1 &
+# grep "trycloudflare.com" tunnel.log
+
+# 停止隧道
+# bash /home/argustest/eBPF-TokenFlow/stop_cloudflare_tunnel.sh
+
+# 首次配置（只需运行一次）
+# bash /home/argustest/eBPF-TokenFlow/cloudflare_tunnel_setup.sh
+# 详细文档: CLOUDFLARE_TUNNEL_DEPLOY.md
+
+cd /home/argustest/eBPF-TokenFlow/my-open-webui && export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" && nvm use 20 && npm run build 2>&1 | tail -30
+
+docker restart open-webui
+

@@ -1,3 +1,0 @@
-from predictive_health_monitor import SmartTokenPacer
-pacer = SmartTokenPacer(input_features=2, pred_len=10)
-pacer.set_scaler(mean=[4.0, 0.0], scale=[1.0, 1.0])
