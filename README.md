@@ -1,8 +1,8 @@
-# Network-Aware Token Scheduling for LLM Streaming: System Design and Experimental Evaluation
+# Project Proteus: A Network-Adaptive Agentic System with RTT-Aware Scheduling
 
 ## 📋 项目概述
 
-本项目实现了一个**网络感知的 LLM Token 调度系统**，通过在 vLLM 中集成网络状态感知能力，优先调度网络条件良好的用户请求，从而提升整体系统的有效吞吐量（Effective Throughput）。系统包含三个核心组件：
+本项目实现了一个**Project Proteus: A Network-Adaptive Agentic System with RTT-Aware Scheduling**，通过在 vLLM 中集成网络状态感知能力，优先调度网络条件良好的用户请求，从而提升整体系统的有效吞吐量（Effective Throughput）。系统包含三个核心组件：
 
 1. **vLLM 调度器修改**：在 vLLM 引擎中集成 Network-Aware 调度逻辑
 2. **Open WebUI 前端改造**：实时测量 RTT 并通过请求注入健康度参数
