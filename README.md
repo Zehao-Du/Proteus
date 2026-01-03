@@ -901,7 +901,6 @@ grep "trycloudflare.com" tunnel.log
 **步骤 1：创建隧道**
 
 ```bash
-cd ~/eBPF-TokenFlow
 bash cloudflare_tunnel_setup.sh
 ```
 
@@ -964,7 +963,7 @@ docker restart open-webui
 ### 4. 运行实验
 
 ```bash
-cd /home/argustest/eBPF-TokenFlow
+
 python timeline_experiment.py \
     --vllm-url http://localhost:8000/v1 \
     --num-users 8192 \
