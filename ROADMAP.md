@@ -17,8 +17,6 @@ This document outlines the current limitations of the TokenFlow system and the d
 **Focus: Advanced Telemetry & Real Integration**
 
 *   **Task A1: Advanced eBPF & Hardware Telemetry**
-    *   [ ] Implement **GPU Monitoring**: Collect GPU utilization and memory usage via NVML (Python bindings).
-    *   [ ] Implement **Socket Backlog Monitoring**: Trace `sk->sk_ack_backlog` to detect receiver-side congestion.
     *   [ ] (Optional) HTTP/gRPC latency tracking via eBPF uprobes.
 
 *   **Task A2: Real LLM Engine Integration**
