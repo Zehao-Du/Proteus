@@ -967,7 +967,7 @@ docker restart open-webui
 python timeline_experiment.py \
     --vllm-url http://localhost:8000/v1 \
     --num-users 8192 \
-    --max-tokens 50 \
+    --max-tokens 200 \
     --concurrency 256 \
     --client-concurrency 2048 \
     --qps 50.0
